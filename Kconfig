@@ -1,0 +1,40 @@
+config USR_LIB_CTAP
+bool  "userspace FIDO CTAP1&2 protocol stack"
+  default y
+  select USR_LIB_USBHID
+  ---help---
+  Support for CTAP1 and/or 2 protocol
+
+if USR_LIB_CTAP
+
+menu "CTAP options"
+
+config USR_LIB_CTAP_DEBUG
+  int "HID stack debug informations level"
+  default 0
+  range 0 2
+  ---help---
+  CTAP2 stack debug level. Supported levels are:
+    * 0: no debug
+    * 1: command execution debug, list received and sent commands
+    * 2: command dump debug, dumping complex commands content and
+         received and sent data size
+
+config USR_LIB_CTAP_CTAP1
+  bool "Support for CTAP1 (i.e. U2F) protocol"
+  default y
+  ---help---
+     Support for initial FIDO 1.2 U2F and FIDO2 CTAP1 (based on APDU
+     transmission) protocol.
+
+config USR_LIB_CTAP_CTAP2
+  bool "Support for CTAP2 protocol"
+  default n
+  ---help---
+     Support for initial FIDO 2 CTAP interface, using either APDU or
+     CBOR encapsulation for data content.
+
+
+endmenu
+
+endif
