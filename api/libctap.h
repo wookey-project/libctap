@@ -42,7 +42,7 @@
 
 typedef mbed_error_t (*ctap_handle_apdu_t)(uint32_t metadata,
                                            uint8_t *msg_in, uint16_t len_in,
-                                           uint8_t *resp, uint16_t len_out);
+                                           uint8_t *resp, uint16_t *len_out);
 
 
 /************************************************************

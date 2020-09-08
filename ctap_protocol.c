@@ -1,6 +1,7 @@
 #include "libc/string.h"
 #include "libusbhid.h"
 #include "ctap_control.h"
+#include "ctap_chan.h"
 #include "ctap_protocol.h"
 
 
@@ -141,21 +142,19 @@ static mbed_error_t handle_rq_msg(ctap_cmd_t* cmd)
         errcode = MBED_ERROR_INVPARAM;
         goto err;
     }
-#if 0
     /* TODO channel to handle */
-    if (channel_exists(cid) == false) {
+    if (ctap_channel_exists(cid) == false) {
         /* invalid channel */
         log_printf("[CTAP][MSG] New CID: %f\n", cid);
         handle_rq_error(cid, U2F_ERR_INVALID_PAR);
         goto err;
     }
-#endif
 
     /* now that header is sanitized, let's push the data content
      * to the backend
      * FIXME: by now, calling APDU backend, no APDU vs CBOR detection */
     uint8_t msg_resp[256] = { 0 };
-    uint16_t resp_len = 0;
+    uint16_t resp_len = 256;
 
 #if 1
     /* MSG in CTAP1 cotnains APDU data. This should be passed to backend APDU through
@@ -163,7 +162,7 @@ static mbed_error_t handle_rq_msg(ctap_cmd_t* cmd)
      * This callback is responsible for passing the APDU content to whatever is
      * responsible for the APDU parsing, FIDO effective execution and result return */
     uint16_t val = (cmd->bcnth << 8) + cmd->bcntl;
-    errcode = ctx->apdu_cmd(0, &(cmd->data[0]), val, &(msg_resp[0]), 256);
+    errcode = ctx->apdu_cmd(0, &(cmd->data[0]), val, &(msg_resp[0]), &resp_len);
         //apdu_handle_request(msg_resp, &resp_len);
     if (errcode != MBED_ERROR_NONE) {
         log_printf("[CTAP][MSG] APDU requests handling failed!\n");
@@ -204,11 +203,9 @@ static mbed_error_t handle_rq_init(const ctap_cmd_t* cmd)
         goto err;
     }
     if (curcid == CTAPHID_BROADCAST_CID) {
-#if 0
         /* new channel request */
-        channel_create(&newcid);
+        ctap_channel_create(&newcid);
         log_printf("[CTAP][INIT] New CID: %x\n", newcid);
-#endif
     } else {
         newcid = curcid;
     }
