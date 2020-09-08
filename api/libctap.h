@@ -40,10 +40,9 @@
  * is to be passed from one lib to another (IPC, direct access, etc.)
  */
 
-/*
- * TODO: msg_in & msg_out *are* APDU and should be strictly defined as APDUs.
- */
-typedef mbed_error_t (*ctap_handle_apdu_t)(uint8_t *msg_in, uint16_t len_in, uint8_t *msg_out, uint16_t len_out);
+typedef mbed_error_t (*ctap_handle_apdu_t)(uint32_t metadata,
+                                           uint8_t *msg_in, uint16_t len_in,
+                                           uint8_t *resp, uint16_t len_out);
 
 
 /************************************************************
@@ -82,7 +81,7 @@ typedef mbed_error_t (*ctap_channel_update_t)(uint32_t cid);
 /*
  * Declare CTAP HID interfae against USBHID stack.
  */
-mbed_error_t ctap_declare(uint8_t usbxdci_handler);
+mbed_error_t ctap_declare(uint8_t usbxdci_handler, ctap_handle_apdu_t apdu_cmd);
 
 /*
  * Configure the overall CTAP and below stack (including HID & USB stack).

@@ -121,9 +121,10 @@ static inline mbed_error_t handle_rq_error(uint32_t cid, ctab_error_code_t hid_e
 /*
  * Handling CTAPHID_MSG command
  */
-static mbed_error_t handle_rq_msg(const ctap_cmd_t* cmd)
+static mbed_error_t handle_rq_msg(ctap_cmd_t* cmd)
 {
     mbed_error_t errcode = MBED_ERROR_NONE;
+    ctap_context_t *ctx = ctap_get_context();
     uint32_t cid = cmd->cid;
     /* CTAPHID level sanitation */
     /* endianess... */
@@ -156,12 +157,14 @@ static mbed_error_t handle_rq_msg(const ctap_cmd_t* cmd)
     uint8_t msg_resp[256] = { 0 };
     uint16_t resp_len = 0;
 
-#if 0
+#if 1
     /* MSG in CTAP1 cotnains APDU data. This should be passed to backend APDU through
      * predefined callback, in the case where libapdu is handled in a different task.
      * This callback is responsible for passing the APDU content to whatever is
      * responsible for the APDU parsing, FIDO effective execution and result return */
-    errcode = apdu_handle_request(msg_resp, &resp_len);
+    uint16_t val = (cmd->bcnth << 8) + cmd->bcntl;
+    errcode = ctx->apdu_cmd(0, &(cmd->data[0]), val, &(msg_resp[0]), 256);
+        //apdu_handle_request(msg_resp, &resp_len);
     if (errcode != MBED_ERROR_NONE) {
         log_printf("[CTAP][MSG] APDU requests handling failed!\n");
         handle_rq_error(cid, U2F_ERR_INVALID_CMD);
@@ -232,7 +235,7 @@ err:
  * Requests dispatcher
  */
 
-mbed_error_t ctap_handle_request(const ctap_cmd_t *ctap_cmd)
+mbed_error_t ctap_handle_request(ctap_cmd_t *ctap_cmd)
 {
     mbed_error_t errcode = MBED_ERROR_NONE;
     uint8_t cmd;
@@ -246,6 +249,16 @@ mbed_error_t ctap_handle_request(const ctap_cmd_t *ctap_cmd)
         errcode = MBED_ERROR_INVPARAM;
         goto err;
     }
+#if 0
+	/* Check locking:TODO : code RYAD */
+	if((cid_locked != 0) && (current_cid_num != frame_full.cid)){
+		if(u2f_hid_send_error(frame_full.cid, ERR_CHANNEL_BUSY)){
+			goto err;
+		}
+		return 0;
+	}
+#endif
+
     /* cleaning bit 7 (always set, see above) */
     cmd = ctap_cmd->cmd & 0x7f;
     switch (cmd) {
@@ -263,6 +276,7 @@ mbed_error_t ctap_handle_request(const ctap_cmd_t *ctap_cmd)
         case CTAP_MSG:
         {
             log_printf("[CTAPHID] received U2F MSG\n");
+            errcode = handle_rq_msg(ctap_cmd);
             break;
         }
         case CTAP_ERROR:

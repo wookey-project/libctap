@@ -25,6 +25,9 @@
 #define CTAP_CONTROL_H_
 
 #include "libc/stdio.h"
+#include "libusbhid.h"
+#include "api/libctap.h"
+#include "ctap_protocol.h"
 
 #if CONFIG_USR_LIB_FIDO_DEBUG
 # define log_printf(...) printf(__VA_ARGS__)
@@ -32,7 +35,39 @@
 # define log_printf(...)
 #endif
 
+typedef enum {
+    CTAP_CMD_BUFFER_STATE_EMPTY,
+    CTAP_CMD_BUFFER_STATE_BUFFERING,
+    CTAP_CMD_BUFFER_STATE_COMPLETE,
+} ctap_buffer_state_t;
+
+
+/* the current FIDO CTAP context */
+typedef struct {
+    usbhid_report_infos_t        *ctap_report;
+    bool                          idle;
+    bool                          locked;
+    uint32_t                      curr_cid;
+    uint8_t                       idle_ms;
+    /* below stacks handlers (not cb, but references) */
+    uint8_t                       hid_handler;
+    uint8_t                       usbxdci_handler;
+    /* upper stack callback */
+    ctap_handle_apdu_t            apdu_cmd;
+    /* CTAP commands */
+    volatile bool                 report_sent;
+    uint8_t                       recv_buf[CTAPHID_FRAME_MAXLEN];
+    ctap_buffer_state_t           ctap_cmd_buf_state;
+    bool                          ctap_cmd_received;
+    uint16_t                      ctap_cmd_size;
+    uint16_t                      ctap_cmd_idx;
+    ctap_cmd_t                    ctap_cmd;
+} ctap_context_t;
+
+
 
 uint8_t ctap_get_usbhid_handler(void);
+
+ctap_context_t *ctap_get_context(void);
 
 #endif /*!CTAP_CONTROL_H_*/

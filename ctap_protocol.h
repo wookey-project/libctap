@@ -155,6 +155,6 @@ typedef enum {
 /*
  * Hande U2F commands
  */
-mbed_error_t ctap_handle_request(const ctap_cmd_t *cmd);
+mbed_error_t ctap_handle_request(ctap_cmd_t *cmd);
 
 #endif/*!CTAP_PROTOCOL_H_*/

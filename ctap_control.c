@@ -28,53 +28,23 @@
 #include "api/libctap.h"
 #include "ctap_protocol.h"
 #include "ctap_control.h"
+#include "ctap_hid.h"
 
 
 #define CTAP_POLL_TIME      5 /* FIDO HID interface definition: Poll-time=5ms */
 #define CTAP_DESCRIPOR_NUM  1 /* To check */
 
-/* Some USAGE attributes are not HID level defines but 'vendor specific'. This is the case for
- * the FIDO usage page, which is a vendor specific usage page, defining its own, cusom USAGE tag values */
-#define CTAP_USAGE_CTAP_U2FHID   0x01
-#define CTAP_USAGE_CTAP_DATA_IN  0x20
-#define CTAP_USAGE_CTAP_DATA_OUT 0x21
-#define CTAP_USAGE_PAGE_BYTE1    0xd0
-#define CTAP_USAGE_PAGE_BYTE0    0xf1
-
-typedef enum {
-    CTAP_CMD_BUFFER_STATE_EMPTY,
-    CTAP_CMD_BUFFER_STATE_BUFFERING,
-    CTAP_CMD_BUFFER_STATE_COMPLETE,
-} ctap_buffer_state_t;
-
-
-/* the current FIDO CTAP context */
-typedef struct {
-    bool                          ctx_locked;
-    usbhid_report_infos_t        *ctap_report;
-    bool                          idle;
-    uint8_t                       idle_ms;
-    /* below stacks handlers */
-    uint8_t                       hid_handler;
-    uint8_t                       usbxdci_handler;
-    /* CTAP commands */
-    volatile bool                 report_sent;
-    uint8_t                       recv_buf[CTAPHID_FRAME_MAXLEN];
-    ctap_buffer_state_t           ctap_cmd_buf_state;
-    bool                          ctap_cmd_received;
-    uint16_t                      ctap_cmd_size;
-    uint16_t                      ctap_cmd_idx;
-    ctap_cmd_t                 ctap_cmd;
-} ctap_context_t;
 
 /* fido context .data initialization */
 static ctap_context_t ctap_ctx = {
-    .ctx_locked = false,
     .ctap_report = NULL,
     .idle = false,
+    .curr_cid = 0,
+    .locked = false,
     .idle_ms = 0,
     .hid_handler = 0,
     .usbxdci_handler = 0,
+    .apdu_cmd = NULL,
     .report_sent = true,
     .recv_buf = { 0 },
     .ctap_cmd_buf_state = CTAP_CMD_BUFFER_STATE_EMPTY,
@@ -83,6 +53,12 @@ static ctap_context_t ctap_ctx = {
     .ctap_cmd_idx = 0,
     .ctap_cmd = { 0 }
 };
+
+ctap_context_t *ctap_get_context(void)
+{
+    return &ctap_ctx;
+}
+
 
 
 mbed_error_t ctap_extract_pkt(ctap_context_t *ctx)
@@ -172,93 +148,22 @@ err:
 }
 
 
-/* USB HID trigger implementation, required to be triggered on various HID events */
-mbed_error_t usbhid_report_received_trigger(uint8_t hid_handler, uint16_t size)
-{
-   log_printf("[CTAPHID] Received FIDO cmd (size %d)\n", size);
-   ctap_ctx.ctap_cmd_received = true;
-   ctap_ctx.ctap_cmd_size = size;
-   /* nothing more to do, as the received  command is already set in .ctap_cmd field */
-   hid_handler = hid_handler; /* XXX to use ?*/
-   return MBED_ERROR_NONE;
-}
-
-/* The FIDO HID report content declaration */
-static usbhid_report_infos_t ctap_std_report = {
-    .num_items = 16,
-    .report_id = 0,
-    .items = {
-        /* this is the standard, datasheet defined FIDO2 HID report */
-        { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_USAGE_PAGE, 2, CTAP_USAGE_PAGE_BYTE1, CTAP_USAGE_PAGE_BYTE0 },
-        { USBHID_ITEM_TYPE_LOCAL, USBHID_ITEM_LOCAL_TAG_USAGE, 1, CTAP_USAGE_CTAP_U2FHID, 0 },
-        { USBHID_ITEM_TYPE_MAIN, USBHID_ITEM_MAIN_TAG_COLLECTION, 1, USBHID_COLL_ITEM_APPLICATION, 0 },
-        { USBHID_ITEM_TYPE_LOCAL, USBHID_ITEM_LOCAL_TAG_USAGE, 1, CTAP_USAGE_CTAP_DATA_IN, 0 },
-        { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_LOGICAL_MIN, 1, 0x0, 0 },
-        { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_LOGICAL_MAX, 2, 0xff, 0 },
-        { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_REPORT_SIZE, 1, 0x8, 0 },
-        { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_REPORT_COUNT, 1, 64, 0 }, /* report count in bytes */
-        { USBHID_ITEM_TYPE_MAIN, USBHID_ITEM_MAIN_TAG_INPUT, 1, USBHID_IOF_ITEM_DATA|USBHID_IOF_ITEM_CONST|USBHID_IOF_ITEM_VARIABLE|USBHID_IOF_ITEM_RELATIVE, 0 },
-        { USBHID_ITEM_TYPE_LOCAL, USBHID_ITEM_LOCAL_TAG_USAGE, 1, CTAP_USAGE_CTAP_DATA_OUT, 0 },
-        { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_LOGICAL_MIN, 1, 0x0, 0 },
-        { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_LOGICAL_MAX, 2, 0xff, 0 },
-        { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_REPORT_SIZE, 1, 0x8, 0 },
-        { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_REPORT_COUNT, 1, 64, 0 }, /* report count in bytes */
-        { USBHID_ITEM_TYPE_MAIN, USBHID_ITEM_MAIN_TAG_OUTPUT, 1, USBHID_IOF_ITEM_DATA|USBHID_IOF_ITEM_CONST|USBHID_IOF_ITEM_VARIABLE|USBHID_IOF_ITEM_RELATIVE, 0 },
-        { USBHID_ITEM_TYPE_MAIN, USBHID_ITEM_MAIN_TAG_END_COLLECTION, 0, 0, 0 }, /* C0 */
-    }
-};
-
-/***********************************************************************
- * HID requested callbacks
- */
-static mbed_error_t           usbhid_set_idle(uint8_t hid_handler, uint8_t idle)
-{
-    hid_handler = hid_handler;
-    log_printf("[CTAPHID] triggered on Set_Idle\n");
-    ctap_ctx.idle_ms = idle;
-    ctap_ctx.idle = true;
-    log_printf("[CTAPHID] set idle time to %d ms\n", idle);
-    return MBED_ERROR_NONE;
-}
-
-
-/* trigger for HID layer GET_REPORT event */
-static usbhid_report_infos_t *usbhid_get_report(uint8_t hid_handler, uint8_t index)
-{
-    log_printf("[CTAPHID] triggered on Get_Report\n");
-    usbhid_report_infos_t *report = NULL;
-    hid_handler = hid_handler; /* only one iface: 0 */
-    switch (index) {
-        case 0:
-            report = ctap_ctx.ctap_report;
-            break;
-        default:
-            log_printf("[CTAPHID] unkown report index %d\n", index);
-            break;
-    }
-    return report;
-}
-
-
-void usbhid_report_sent_trigger(uint8_t hid_handler, uint8_t index)
-{
-    hid_handler = hid_handler;
-    index = index;
-    ctap_ctx.report_sent = true;
-}
-
-
-
 /********************************************************************
  * FIDO API
  */
 
-mbed_error_t ctap_declare(uint8_t usbxdci_handler)
+mbed_error_t ctap_declare(uint8_t usbxdci_handler, ctap_handle_apdu_t apdu_handler)
 {
     mbed_error_t errcode = MBED_ERROR_UNKNOWN;
     /* first initializing basics of local context */
     ctap_ctx.usbxdci_handler = usbxdci_handler;
-    ctap_ctx.ctap_report = &ctap_std_report;
+    ctap_ctx.ctap_report = ctap_get_report();
+    if (apdu_handler == NULL) {
+        errcode = MBED_ERROR_INVPARAM;
+        log_printf("%s: APDU handler is NULL\n", __func__);
+        goto err;
+    }
+    ctap_ctx.apdu_cmd = apdu_handler;
 
     log_printf("[CTAPHID] declare usbhid interface for FIDO CTAP\n");
     errcode = usbhid_declare(usbxdci_handler,
