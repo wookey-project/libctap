@@ -168,7 +168,7 @@ mbed_error_t ctap_declare(uint8_t usbxdci_handler, ctap_handle_apdu_t apdu_handl
     log_printf("[CTAPHID] declare usbhid interface for FIDO CTAP\n");
     errcode = usbhid_declare(usbxdci_handler,
                              USBHID_SUBCLASS_NONE, USBHID_PROTOCOL_NONE,
-                             CTAP_DESCRIPOR_NUM, CTAP_POLL_TIME, true,
+                             CTAP_DESCRIPOR_NUM, CTAP_POLL_TIME, false,
                              64, &(ctap_ctx.hid_handler));
     if (errcode != MBED_ERROR_NONE) {
         log_printf("[CTAPHID] failure while declaring FIDO interface: err=%d\n", errcode);
@@ -226,10 +226,11 @@ mbed_error_t ctap_exec(void)
     }
     /* TODO: set report to 0 */
     if (ctap_ctx.ctap_cmd_received) {
+        log_printf("[CTAPHID] input CTAP cmd received\n");
         /* an CTAP command has been received! handle it! */
         /* is the packet fragmented ? If yes, just buffer it and continue.... */
         if ((errcode = ctap_extract_pkt(&ctap_ctx)) != MBED_ERROR_NONE) {
-            log_printf("[FIDO] error during recv packet refragmentation, err=%x\n", errcode);
+            log_printf("[CTAPHID] error during recv packet refragmentation, err=%x\n", errcode);
             goto err;
         }
         if (ctap_ctx.ctap_cmd_buf_state == CTAP_CMD_BUFFER_STATE_COMPLETE) {

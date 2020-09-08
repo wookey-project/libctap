@@ -20,7 +20,7 @@ static usbhid_report_infos_t ctap_std_report = {
     .report_id = 0,
     .items = {
         /* this is the standard, datasheet defined FIDO2 HID report */
-        { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_USAGE_PAGE, 2, CTAP_USAGE_PAGE_BYTE1, CTAP_USAGE_PAGE_BYTE0 },
+        { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_USAGE_PAGE, 2, CTAP_USAGE_PAGE_BYTE0, CTAP_USAGE_PAGE_BYTE1 },
         { USBHID_ITEM_TYPE_LOCAL, USBHID_ITEM_LOCAL_TAG_USAGE, 1, CTAP_USAGE_CTAP_U2FHID, 0 },
         { USBHID_ITEM_TYPE_MAIN, USBHID_ITEM_MAIN_TAG_COLLECTION, 1, USBHID_COLL_ITEM_APPLICATION, 0 },
         { USBHID_ITEM_TYPE_LOCAL, USBHID_ITEM_LOCAL_TAG_USAGE, 1, CTAP_USAGE_CTAP_DATA_IN, 0 },
@@ -99,6 +99,7 @@ usbhid_report_infos_t *usbhid_get_report(uint8_t hid_handler, uint8_t index)
 void usbhid_report_sent_trigger(uint8_t hid_handler, uint8_t index)
 {
     ctap_context_t *ctx = ctap_get_context();
+    log_printf("[CTAPHID] report sent!\n");
     hid_handler = hid_handler;
     index = index;
     ctx->report_sent = true;
