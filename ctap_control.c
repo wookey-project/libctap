@@ -168,7 +168,7 @@ mbed_error_t ctap_declare(uint8_t usbxdci_handler, ctap_handle_apdu_t apdu_handl
     log_printf("[CTAPHID] declare usbhid interface for FIDO CTAP\n");
     errcode = usbhid_declare(usbxdci_handler,
                              USBHID_SUBCLASS_NONE, USBHID_PROTOCOL_NONE,
-                             CTAP_DESCRIPOR_NUM, CTAP_POLL_TIME, false,
+                             CTAP_DESCRIPOR_NUM, CTAP_POLL_TIME, true,
                              64, &(ctap_ctx.hid_handler),
                                  (uint8_t*)&ctap_ctx.recv_buf,
                                  CTAPHID_FRAME_MAXLEN);
@@ -188,6 +188,7 @@ mbed_error_t ctap_declare(uint8_t usbxdci_handler, ctap_handle_apdu_t apdu_handl
         goto err;
     }
 
+    log_printf("[CTAPHID] configuration done\n");
     errcode = MBED_ERROR_NONE;
 err:
     return errcode;
@@ -195,6 +196,11 @@ err:
 
 mbed_error_t ctap_configure(void)
 {
+        /* in that case, any Set_Report (DATA OUT) is pushed to dedicated OUT EP instead
+         * of EP0. This avoid using control plane for DATA content. Althgouh,
+         * we have to configure this EP in order to be ready to receive the report */
+        usbhid_recv_report(ctap_ctx.hid_handler, ctap_ctx.recv_buf, CTAPHID_FRAME_MAXLEN);
+
     return MBED_ERROR_NONE;
 }
 
