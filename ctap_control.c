@@ -169,7 +169,9 @@ mbed_error_t ctap_declare(uint8_t usbxdci_handler, ctap_handle_apdu_t apdu_handl
     errcode = usbhid_declare(usbxdci_handler,
                              USBHID_SUBCLASS_NONE, USBHID_PROTOCOL_NONE,
                              CTAP_DESCRIPOR_NUM, CTAP_POLL_TIME, false,
-                             64, &(ctap_ctx.hid_handler));
+                             64, &(ctap_ctx.hid_handler),
+                                 (uint8_t*)&ctap_ctx.recv_buf,
+                                 CTAPHID_FRAME_MAXLEN);
     if (errcode != MBED_ERROR_NONE) {
         log_printf("[CTAPHID] failure while declaring FIDO interface: err=%d\n", errcode);
         goto err;
@@ -197,14 +199,6 @@ mbed_error_t ctap_configure(void)
 }
 
 /* we initialize our OUT EP to be ready to receive, if needed. */
-mbed_error_t ctap_prepare_exec(void)
-{
-    /*
-     * First tour MUST BE a CTAPHID_INIT packet, which is less than CTAPHID_FRAME_MAXLEN size.
-     */
-    return usbhid_recv_report(ctap_ctx.hid_handler, (uint8_t*)&ctap_ctx.recv_buf, CTAPHID_FRAME_MAXLEN);
-}
-
 /*
  * Executing a single loop:
  *  - get back potential cmd
