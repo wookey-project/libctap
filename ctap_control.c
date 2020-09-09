@@ -231,16 +231,20 @@ mbed_error_t ctap_exec(void)
         /* is the packet fragmented ? If yes, just buffer it and continue.... */
         if ((errcode = ctap_extract_pkt(&ctap_ctx)) != MBED_ERROR_NONE) {
             log_printf("[CTAPHID] error during recv packet refragmentation, err=%x\n", errcode);
+            ctap_ctx.ctap_cmd_received = false;
+            ctap_ctx.ctap_cmd_buf_state = CTAP_CMD_BUFFER_STATE_EMPTY;
             goto err;
         }
         if (ctap_ctx.ctap_cmd_buf_state == CTAP_CMD_BUFFER_STATE_COMPLETE) {
             /* not fragmented ? if the buffer should handle a CTAPHID request that is clean
              * and ready to be handled. Let's treat it. */
             errcode = ctap_handle_request(&ctap_ctx.ctap_cmd);
+            /* now that packet is handled, cleaning */
+            ctap_ctx.ctap_cmd_buf_state = CTAP_CMD_BUFFER_STATE_EMPTY;
         }
         ctap_ctx.ctap_cmd_received = false;
-        /* XXX: it seems that the FIFO size is hard-coded to 64 bytes */
         usbhid_recv_report(ctap_ctx.hid_handler, (uint8_t*)&ctap_ctx.recv_buf, CTAPHID_FRAME_MAXLEN);
+        /* XXX: it seems that the FIFO size is hard-coded to 64 bytes */
         /* now that current report/response has been consumed, ready to receive
          * new CTAP report. Set reception EP ready */
     }

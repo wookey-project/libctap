@@ -45,9 +45,9 @@ typedef enum {
 /* the current FIDO CTAP context */
 typedef struct {
     usbhid_report_infos_t        *ctap_report;
-    bool                          idle;
-    bool                          locked;
-    uint32_t                      curr_cid;
+    volatile bool                          idle;
+    volatile bool                          locked;
+    volatile uint32_t                      curr_cid;
     uint8_t                       idle_ms;
     /* below stacks handlers (not cb, but references) */
     uint8_t                       hid_handler;
@@ -57,8 +57,8 @@ typedef struct {
     /* CTAP commands */
     volatile bool                 report_sent;
     uint8_t                       recv_buf[CTAPHID_FRAME_MAXLEN];
-    ctap_buffer_state_t           ctap_cmd_buf_state;
-    bool                          ctap_cmd_received;
+    volatile ctap_buffer_state_t  ctap_cmd_buf_state;
+    volatile bool                 ctap_cmd_received;
     uint16_t                      ctap_cmd_size;
     uint16_t                      ctap_cmd_idx;
     ctap_cmd_t                    ctap_cmd;
