@@ -60,6 +60,86 @@ ctap_context_t *ctap_get_context(void)
 }
 
 
+mbed_error_t ctaphid_receive_pkt(ctap_context_t *ctx)
+{
+    mbed_error_t errcode;
+    ctx->ctap_cmd_received = false;
+    uint8_t num_frames = 0;
+
+    memset(&(ctx->ctap_cmd), 0, sizeof(ctap_cmd_t));
+    /* listen on data */
+    usbhid_recv_report(ctap_ctx.hid_handler, (uint8_t*)&ctap_ctx.recv_buf, CTAPHID_FRAME_MAXLEN);
+    /* wait for reception */
+    while (!ctap_ctx.ctap_cmd_received);
+    /* get back initial frame */
+    ctap_init_cmd_t *init_cmd = (ctap_init_cmd_t*)&ctx->recv_buf[0];
+    /* total amount of bytes that should be received is defined */
+    uint16_t blen = (init_cmd->header.bcnth << 8) | init_cmd->header.bcntl;
+    /* preparing full frame header */
+    ctx->ctap_cmd.cid = init_cmd->header.cid;
+    ctx->ctap_cmd.cmd = init_cmd->header.cmd;
+    ctx->ctap_cmd.bcnth = init_cmd->header.bcnth;
+    ctx->ctap_cmd.bcntl = init_cmd->header.bcntl;
+
+    if (blen > CTAPHID_FRAME_MAXLEN -  sizeof(ctap_init_header_t)) {
+        /* let's check the amount of data bytes with regards to effective max size */
+        uint16_t offset = 0;
+        num_frames = (blen - (CTAPHID_FRAME_MAXLEN -  sizeof(ctap_init_header_t))) / (CTAPHID_FRAME_MAXLEN - sizeof(ctap_seq_header_t));
+
+        if((blen - (CTAPHID_FRAME_MAXLEN-sizeof(ctap_init_header_t))) % (CTAPHID_FRAME_MAXLEN-sizeof(ctap_seq_header_t)) != 0) {
+            num_frames += 1;
+        }
+
+        /* let's copy the max amount of data in one pkt  */
+        memcpy(&(ctx->ctap_cmd.data[0]), &(init_cmd->data[0]), CTAPHID_FRAME_MAXLEN - sizeof(ctap_init_header_t));
+        offset +=  CTAPHID_FRAME_MAXLEN - sizeof(ctap_init_header_t);
+
+        uint8_t i;
+        for (i = 0; i < num_frames; ++i) {
+            ctap_seq_cmd_t *seq_cmd = (ctap_seq_cmd_t*)&ctx->recv_buf[0];
+            ctx->ctap_cmd_received = false;
+            /* listen on data */
+            usbhid_recv_report(ctap_ctx.hid_handler, (uint8_t*)&ctap_ctx.recv_buf, CTAPHID_FRAME_MAXLEN);
+            /* wait for reception */
+            while (!ctap_ctx.ctap_cmd_received);
+
+            /* sanitizing */
+            if (seq_cmd->header.cid != ctx->ctap_cmd.cid) {
+                log_printf("[CTAPHID] %s: receive frame: wrong cid %x in seq, should be %x\n", __func__, seq_cmd->header.cid, ctx->ctap_cmd.cid);
+                errcode = MBED_ERROR_INVPARAM;
+                goto err;
+            }
+            /* INIT frame ? (not a seq) */
+            if (((((ctap_init_cmd_t*)seq_cmd)->header.cmd) & 0x80) != 0) {
+                log_printf("[CTAPHID] received SYNC during seq\n");
+                /* TODO how to handle properly.... */
+                errcode = MBED_ERROR_INVSTATE;
+                goto err;
+            }
+            if((seq_cmd->header.seq != i) || (seq_cmd->header.seq > 0x7f)) {
+                log_printf("[CTAPHID] u2f_hid_receive_frame: error in SEQ ...\n");
+                errcode = MBED_ERROR_INVSTATE;
+                goto err;
+            }
+            if(offset > (CRAPHID_MAX_PAYLOAD_SIZE - (CTAPHID_FRAME_MAXLEN-sizeof(ctap_seq_header_t)))) {
+            }
+
+            memcpy(&(ctx->ctap_cmd.data[offset]), &(seq_cmd->data[0]), (CTAPHID_FRAME_MAXLEN-sizeof(ctap_seq_header_t)));
+            offset += (CTAPHID_FRAME_MAXLEN-5);
+
+
+        }
+    } else {
+        memcpy(&(ctx->ctap_cmd.data[0]), &(init_cmd->data[0]), blen);
+    }
+    /* pull down received flag */
+
+    errcode = MBED_ERROR_NONE;
+err:
+    return errcode;
+
+}
+
 
 mbed_error_t ctap_extract_pkt(ctap_context_t *ctx)
 {
@@ -224,6 +304,11 @@ mbed_error_t ctap_exec(void)
         /* wait for previous report to be sent first */
         goto err;
     }
+    if (ctaphid_receive_pkt(&ctap_ctx) == MBED_ERROR_NONE) {
+        errcode = ctap_handle_request(&ctap_ctx.ctap_cmd);
+    }
+    ctap_ctx.ctap_cmd_received = false;
+#if 0
     /* TODO: set report to 0 */
     if (ctap_ctx.ctap_cmd_received) {
         log_printf("[CTAPHID] input CTAP cmd received\n");
@@ -248,6 +333,7 @@ mbed_error_t ctap_exec(void)
         /* now that current report/response has been consumed, ready to receive
          * new CTAP report. Set reception EP ready */
     }
+#endif
 err:
     return errcode;
 }

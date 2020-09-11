@@ -38,26 +38,12 @@ static mbed_error_t ctaphid_send_response(uint8_t *resp, const uint16_t resp_len
     mbed_error_t errcode = MBED_ERROR_NONE;
     uint8_t sequence = 0;
     /* sanitize first */
-    if (resp == NULL) {
+    if (resp == NULL && resp_len != 0) {
         log_printf("[CTAP] invalid response buf %x\n", resp);
         errcode = MBED_ERROR_INVPARAM;
         goto err;
     }
-    if (resp_len == 0) {
-        log_printf("[CTAP] invalid response len %x\n", resp_len);
-        errcode = MBED_ERROR_INVPARAM;
-        goto err;
-    }
     log_printf("[CTAPHID] 0x%x (%d) bytes to send\n", resp_len, resp_len);
-#if 0
-    if (resp_len > 256) {
-        log_printf("[CTAP] invalid response len %x\n", resp_len);
-        /* data[] field is defined as upto 256 bytes length. This test is also
-         * a protection against integer overflow in the idx++ loop below */
-        errcode = MBED_ERROR_INVPARAM;
-        goto err;
-    }
-#endif
     /* we know that the effective response buffer is upto ctap_resp_header_t + 256 bytes
      * (defined in the FIDO U2F standard). Finally, we can only push upto 64 bytes at a time.
      */
@@ -91,12 +77,14 @@ static mbed_error_t ctaphid_send_response(uint8_t *resp, const uint16_t resp_len
 
         /*now copy effective response content to current chunk */
         if (new_seq == true) {
+            /* if resp is NULL, resp_len is 0, while is not executed */
             while (idx < resp_len && offset < max_resp_len) {
                 full_init_resp.data[offset] = resp[idx];
                 offset++;
                 idx++;
             }
         } else {
+            /* if resp is NULL, resp_len is 0, while is not executed */
             while (idx < resp_len && offset < max_resp_len) {
                 full_seq_resp.data[offset] = resp[idx];
                 offset++;
@@ -132,20 +120,32 @@ err:
     return errcode;
 }
 
-static inline mbed_error_t handle_rq_error(uint32_t cid, ctab_error_code_t hid_error)
-{
-    /* C enumerate length may vary depending on the compiler. Thouht, the
-     * HID error type is defined to handle unsigned values up to 256 max */
-    uint8_t error = hid_error;
-    return ctaphid_send_response((uint8_t*)&error, sizeof(uint8_t), cid, CTAP_INIT|0x80);
-}
-
 
 /*******************************************************************
  * Each request effective handling. These functions may depend on local utility (see above)
  * or on FIDO cryptographic backend (effective FIDO U2F cryptographic implementation
  * in the Token).
  */
+
+
+static mbed_error_t handle_rq_error(uint32_t cid, uint8_t error)
+{
+	/* Prepare our frame */
+    ctap_init_cmd_t frame;
+	memset(&frame, 0, sizeof(frame));
+
+	/* Send the frame on the line */
+	if(ctaphid_send_response((uint8_t*)&error, 1, cid, CTAP_ERROR)) {
+		goto err;
+	}
+
+	return MBED_ERROR_NONE;
+
+err:
+	log_printf("[CTAPHID] u2f_hid_send_error: send error\n");
+	return MBED_ERROR_UNKNOWN;
+}
+
 /*
  * Handling CTAPHID_MSG command
  */
@@ -203,6 +203,53 @@ err:
     return errcode;
 }
 
+static mbed_error_t handle_rq_ping(const ctap_cmd_t*cmd)
+{
+    uint16_t len = (cmd->bcnth << 8) + cmd->bcntl + sizeof(ctap_init_header_t);
+    return ctaphid_send_response((uint8_t*)cmd, len, cmd->cid, CTAP_PING|0x80);
+}
+
+static mbed_error_t handle_rq_wink(const ctap_cmd_t*cmd)
+{
+    mbed_error_t errcode = MBED_ERROR_NONE;
+    uint16_t len = (cmd->bcnth << 8) + cmd->bcntl + sizeof(ctap_init_header_t);
+	/* We expect 0 data */
+    if (len != 0) {
+       errcode = handle_rq_error(cmd->cid, U2F_ERR_INVALID_LEN);
+       goto err;
+    }
+    /* first do something for user interaction ... */
+
+    /* and return back content */
+    errcode = ctaphid_send_response((uint8_t*)cmd, len, cmd->cid, CTAP_PING|0x80);
+err:
+    return errcode;
+}
+
+static mbed_error_t handle_rq_lock(const ctap_cmd_t*cmd)
+{
+    mbed_error_t errcode = MBED_ERROR_NONE;
+    uint16_t len = (cmd->bcnth << 8) + cmd->bcntl + sizeof(ctap_init_header_t);
+	/* We expect 0 data */
+    if (len != 1) {
+       errcode = handle_rq_error(cmd->cid, U2F_ERR_INVALID_LEN);
+       goto err;
+    }
+    if (cmd->data[0] > 10) {
+		/* Only timeouts <= 10 seconds are allowed! */
+       errcode = handle_rq_error(cmd->cid, U2F_ERR_INVALID_PAR);
+       goto err;
+    }
+
+    errcode = ctaphid_send_response(NULL, 0, cmd->cid, CTAP_LOCK|0x80);
+
+    /**
+     * TODO: set ctx as locked for the amount of time set in data[0]
+     */
+
+err:
+    return errcode;
+}
 
 
 /*
@@ -255,6 +302,9 @@ err:
 }
 
 
+
+
+
 /******************************************************
  * Requests dispatcher
  */
@@ -295,6 +345,7 @@ mbed_error_t ctap_handle_request(ctap_cmd_t *ctap_cmd)
         case CTAP_PING:
         {
             log_printf("[CTAPHID] received U2F PING\n");
+            errcode = handle_rq_ping(ctap_cmd);
             break;
         }
         case CTAP_MSG:
@@ -306,16 +357,19 @@ mbed_error_t ctap_handle_request(ctap_cmd_t *ctap_cmd)
         case CTAP_ERROR:
         {
             log_printf("[CTAPHID] received U2F ERROR\n");
+            errcode = handle_rq_error(ctap_cmd->cid, U2F_ERR_INVALID_CMD);
             break;
         }
         case CTAP_WINK:
         {
             log_printf("[CTAPHID] received U2F WINK\n");
+            errcode = handle_rq_wink(ctap_cmd);
             break;
         }
         case CTAP_LOCK:
         {
             log_printf("[CTAPHID] received U2F LOCK\n");
+            errcode = handle_rq_lock(ctap_cmd);
             break;
         }
         default:
