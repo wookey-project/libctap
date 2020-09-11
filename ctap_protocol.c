@@ -46,6 +46,7 @@ static mbed_error_t ctaphid_send_response(uint8_t *resp, uint16_t resp_len, uint
         errcode = MBED_ERROR_INVPARAM;
         goto err;
     }
+#if 0
     if (resp_len > 256) {
         log_printf("[CTAP] invalid response len %x\n", resp_len);
         /* data[] field is defined as upto 256 bytes length. This test is also
@@ -53,7 +54,7 @@ static mbed_error_t ctaphid_send_response(uint8_t *resp, uint16_t resp_len, uint
         errcode = MBED_ERROR_INVPARAM;
         goto err;
     }
-
+#endif
     /* we know that the effective response buffer is upto ctap_resp_header_t + 256 bytes
      * (defined in the FIDO U2F standard). Finally, we can only push upto 64 bytes at a time.
      */
@@ -153,8 +154,8 @@ static mbed_error_t handle_rq_msg(ctap_cmd_t* cmd)
     /* now that header is sanitized, let's push the data content
      * to the backend
      * FIXME: by now, calling APDU backend, no APDU vs CBOR detection */
-    uint8_t msg_resp[256] = { 0 };
-    uint16_t resp_len = 256;
+    uint8_t msg_resp[1024] = { 0 };
+    uint16_t resp_len = sizeof(msg_resp);
 
 #if 1
     /* MSG in CTAP1 cotnains APDU data. This should be passed to backend APDU through
