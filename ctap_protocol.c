@@ -7,15 +7,17 @@
 
 typedef union {
     ctap_init_header_t     init;
-    ctap_seq_header_t seq;
-} ctap_resp_headers_t;
+    ctap_seq_header_t      seq;
+} ctap_resp_t;
 
+#if 0
 /* a response can be seen as a header with a trailing data
  * or a uint8_t data flow of upto 64 bytes len */
 typedef union {
     ctap_resp_headers_t  header;
     uint8_t    data[64]; /* all responses are padded to 64 bytes */
 } ctap_resp_t;
+#endif
 
 
 /*******************************************************************
@@ -31,7 +33,7 @@ typedef union {
  * frame (with CID, cmd, bcnt). Others successive ones are CTAP CONT
  * (cid and sequence identifier, no cmd, no bcnt - i.e. bcnt is flow global)
  */
-static mbed_error_t ctaphid_send_response(uint8_t *resp, uint16_t resp_len, uint32_t cid, uint8_t cmd)
+static mbed_error_t ctaphid_send_response(uint8_t *resp, const uint16_t resp_len, uint32_t cid, uint8_t cmd)
 {
     mbed_error_t errcode = MBED_ERROR_NONE;
     uint8_t sequence = 0;
@@ -46,6 +48,7 @@ static mbed_error_t ctaphid_send_response(uint8_t *resp, uint16_t resp_len, uint
         errcode = MBED_ERROR_INVPARAM;
         goto err;
     }
+    log_printf("[CTAPHID] 0x%x (%d) bytes to send\n", resp_len, resp_len);
 #if 0
     if (resp_len > 256) {
         log_printf("[CTAP] invalid response len %x\n", resp_len);
@@ -59,48 +62,71 @@ static mbed_error_t ctaphid_send_response(uint8_t *resp, uint16_t resp_len, uint
      * (defined in the FIDO U2F standard). Finally, we can only push upto 64 bytes at a time.
      */
     /* total response content to handle */
-    uint32_t pushed_bytes = 0;
-
-    ctap_resp_t full_resp = { 0 };
     uint32_t offset = 0;
     uint32_t max_resp_len = 0;
+    uint32_t idx = 0;
+    bool new_seq = true;
     do {
+        uint32_t len = 0;
+        offset = 0;
+        ctap_init_cmd_t full_init_resp = { 0 };
+        ctap_seq_cmd_t full_seq_resp = { 0 };
+        if (new_seq == true) {
         /* cleaning potential previous frames */
-        memset(&full_resp.data[0], 0x0, 64);
-        if (pushed_bytes == 0) {
             log_printf("[CTAP] first response chunk\n");
             /* first pass */
-            full_resp.header.init.cid = cid;
-            full_resp.header.init.cmd = cmd;
-            full_resp.header.init.bcnth = (resp_len & 0xff00) >> 8;
-            full_resp.header.init.bcntl = (resp_len & 0xff);
-            offset = sizeof(ctap_init_header_t);
-            max_resp_len = CTAPHID_FRAME_MAXLEN - offset;
+            full_init_resp.header.cid = cid;
+            full_init_resp.header.cmd = cmd;
+            full_init_resp.header.bcnth = (resp_len & 0xff00) >> 8;
+            full_init_resp.header.bcntl = (resp_len & 0xff);
+            max_resp_len = CTAPHID_FRAME_MAXLEN - sizeof(ctap_init_header_t);
         } else {
             log_printf("[CTAP] sequence response chunk\n");
-            full_resp.header.seq.cid = cid;
-            full_resp.header.seq.seq = sequence;
+            full_seq_resp.header.cid = cid;
+            full_seq_resp.header.seq = sequence;
+            max_resp_len = CTAPHID_FRAME_MAXLEN - sizeof(ctap_seq_header_t);
             sequence++;
-            offset = sizeof(ctap_seq_header_t);
-            max_resp_len = CTAPHID_FRAME_MAXLEN - offset;
         }
-        /*now handle effective response content */
-        uint32_t idx = pushed_bytes;
-        while (idx < resp_len && idx <= max_resp_len) {
-            full_resp.data[offset] = resp[idx];
-            offset++;
-            idx++;
+        /* remaining size in frame for data (after header) */
+
+        /*now copy effective response content to current chunk */
+        if (new_seq == true) {
+            while (idx < resp_len && offset < max_resp_len) {
+                full_init_resp.data[offset] = resp[idx];
+                offset++;
+                idx++;
+            }
+        } else {
+            while (idx < resp_len && offset < max_resp_len) {
+                full_seq_resp.data[offset] = resp[idx];
+                offset++;
+                idx++;
+            }
         }
         /* here, full_resp is ready to be sent. Its size can be 64 bytes length
          * or less (offset value). We send the current report chunk here. */
-        log_printf("[CTAP] Sending report chunk (offset %d)\n", idx);
-        usbhid_send_report(ctap_get_usbhid_handler(), &(full_resp.data[0]), USBHID_OUTPUT_REPORT, 0);
+
+        if (new_seq == true) {
+            /* amount to send */
+            len = offset + sizeof(ctap_init_header_t);
+            log_printf("[CTAP] Sending response first chunk headersize:%d; data:%d (len %d)\n", sizeof(ctap_init_header_t), offset, len);
+            usbhid_send_response(ctap_get_usbhid_handler(), (uint8_t*)&full_init_resp, len);
+        } else {
+            len = offset + sizeof(ctap_seq_header_t);
+            log_printf("[CTAP] Sending resp seq chunk headersize:%d; data:%d (len %d)\n", sizeof(ctap_seq_header_t), offset, len);
+            usbhid_send_response(ctap_get_usbhid_handler(), (uint8_t*)&full_seq_resp, len);
+        }
         /* updated pushed_bytes count */
-        pushed_bytes = idx;
-    } while (pushed_bytes < resp_len);
+        log_printf("[CTAP] sending %d bytes on %d\n", idx, resp_len);
+        /* the first time we get here, we have send the first chunk. Each other times are consecutive
+         * chunks */
+        new_seq = false;
+    } while (idx < resp_len);
 
     /* here, all chunk(s) has been sent. All are upto CTAPHID_FRAME_MAXLEN. The total length
      * is defined by resp_len and set in the first chunk header. */
+    /* finishing with ZLP */
+    //usb_backend_drv_send_zlp(epid);
 
 err:
     return errcode;

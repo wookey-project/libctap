@@ -93,6 +93,15 @@ typedef struct __packed {
     /* differenciated resp here */
 } ctap_seq_header_t;
 
+typedef struct __packed {
+    ctap_init_header_t header;
+    uint8_t data[64];
+} ctap_init_cmd_t;
+
+typedef struct __packed {
+    ctap_seq_header_t header;
+    uint8_t data[64];
+} ctap_seq_cmd_t;
 
 typedef struct __packed {
     uint8_t nonce[8];
