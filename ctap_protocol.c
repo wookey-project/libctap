@@ -98,10 +98,18 @@ static mbed_error_t ctaphid_send_response(uint8_t *resp, const uint16_t resp_len
             /* amount to send */
             len = offset + sizeof(ctap_init_header_t);
             log_printf("[CTAP] Sending response first chunk headersize:%d; data:%d (len %d)\n", sizeof(ctap_init_header_t), offset, len);
+            if (len < CTAPHID_FRAME_MAXLEN) {
+                /* padding to mpsize */
+                len = CTAPHID_FRAME_MAXLEN;
+            }
             usbhid_send_response(ctap_get_usbhid_handler(), (uint8_t*)&full_init_resp, len);
         } else {
             len = offset + sizeof(ctap_seq_header_t);
             log_printf("[CTAP] Sending resp seq chunk headersize:%d; data:%d (len %d)\n", sizeof(ctap_seq_header_t), offset, len);
+            if (len < CTAPHID_FRAME_MAXLEN) {
+                /* padding to mpsize */
+                len = CTAPHID_FRAME_MAXLEN;
+            }
             usbhid_send_response(ctap_get_usbhid_handler(), (uint8_t*)&full_seq_resp, len);
         }
         /* updated pushed_bytes count */
@@ -115,6 +123,7 @@ static mbed_error_t ctaphid_send_response(uint8_t *resp, const uint16_t resp_len
      * is defined by resp_len and set in the first chunk header. */
     /* finishing with ZLP */
     //usb_backend_drv_send_zlp(epid);
+    usbhid_response_done(ctap_get_usbhid_handler());
 
 err:
     return errcode;
@@ -252,6 +261,7 @@ err:
 }
 
 
+#define INIT_NONCE_SIZE 8
 /*
  * Handling CTAPHID_INIT command
  */
@@ -275,28 +285,35 @@ static mbed_error_t handle_rq_init(const ctap_cmd_t* cmd)
         handle_rq_error(curcid, U2F_ERR_INVALID_PAR);
         errcode = MBED_ERROR_INVPARAM;
         goto err;
-    }
-    if (curcid == CTAPHID_BROADCAST_CID) {
         /* new channel request */
-        ctap_channel_create(&newcid);
-        log_printf("[CTAP][INIT] New CID: %x\n", newcid);
     } else {
         newcid = curcid;
     }
-    ctap_resp_init_t init_resp = { 0 };
-    for (uint8_t i = 0; i < 8; ++i) {
-      init_resp.nonce[i] = cmd->data[i];
-    }
+    uint8_t resp[17] = { 0 };
+    memcpy(&(resp[0]), cmd->data, INIT_NONCE_SIZE);
 
-    init_resp.chanid = newcid;
-    init_resp.proto_version = USBHID_PROTO_VERSION;
-    init_resp.major_n = 0;
-    init_resp.minor_n = 0;
-    init_resp.build_n = 0;
-    init_resp.capa_f = CTAP_CAPA_WINK;
+    if (cmd->cid == CTAPHID_BROADCAST_CID) {
+		/* Allocate next CID */
+        ctap_channel_create(&newcid);
+        log_printf("[CTAP][INIT] New CID: %x\n", newcid);
+		*(uint32_t*)(&(resp[INIT_NONCE_SIZE])) = newcid;
+        curcid = CTAPHID_BROADCAST_CID;
+	} else{
+		*(uint32_t*)(&(resp[INIT_NONCE_SIZE])) = cmd->cid;
+        curcid = cmd->cid;
+	}
+	/* Version identifiers */
+	resp[12] = USBHID_PROTO_VERSION; // U2FHID protocol version identifier
+	resp[13] = 0; // Major device version number
+	resp[14] = 0; // Minor device version number
+	resp[15] = 0; // Build device version number
+	/* Capabilities flag: we accept the WINK command */
+	resp[16] = CTAP_CAPA_WINK|CTAP_CAPA_LOCK; // Capabilities flags
+	/* Send the frame on the line */
 
     log_printf("[CTAP][INIT] Sending back response\n");
-    errcode = ctaphid_send_response((uint8_t*)&init_resp, sizeof(ctap_resp_init_t), curcid, CTAP_INIT|0x80);
+    errcode = ctaphid_send_response((uint8_t*)&resp, sizeof(resp), curcid, CTAP_INIT|0x80);
+
 err:
     return errcode;
 }
