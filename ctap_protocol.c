@@ -391,6 +391,7 @@ mbed_error_t ctap_handle_request(ctap_cmd_t *ctap_cmd)
         }
         default:
             log_printf("[CTAPHID] Unkown cmd %d\n", ctap_cmd);
+            errcode = handle_rq_error(ctap_cmd->cid, U2F_ERR_INVALID_CMD);
             break;
     }
 err:
