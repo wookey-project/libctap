@@ -54,6 +54,7 @@ typedef struct {
     uint8_t                       usbxdci_handler;
     /* upper stack callback */
     ctap_handle_apdu_t            apdu_cmd;
+    ctap_handle_wink_t            wink_cmd;
     /* CTAP commands */
     volatile bool                 report_sent;
     uint8_t                       recv_buf[CTAPHID_FRAME_MAXLEN];

@@ -232,7 +232,7 @@ err:
  * FIDO API
  */
 
-mbed_error_t ctap_declare(uint8_t usbxdci_handler, ctap_handle_apdu_t apdu_handler)
+mbed_error_t ctap_declare(uint8_t usbxdci_handler, ctap_handle_apdu_t apdu_handler, ctap_handle_wink_t wink_handler)
 {
     mbed_error_t errcode = MBED_ERROR_UNKNOWN;
     /* first initializing basics of local context */
@@ -243,7 +243,13 @@ mbed_error_t ctap_declare(uint8_t usbxdci_handler, ctap_handle_apdu_t apdu_handl
         log_printf("%s: APDU handler is NULL\n", __func__);
         goto err;
     }
+    if (wink_handler == NULL) {
+        errcode = MBED_ERROR_INVPARAM;
+        log_printf("%s: Wink handler is NULL\n", __func__);
+        goto err;
+    }
     ctap_ctx.apdu_cmd = apdu_handler;
+    ctap_ctx.wink_cmd = wink_handler;
 
     log_printf("[CTAPHID] declare usbhid interface for FIDO CTAP\n");
     errcode = usbhid_declare(usbxdci_handler,

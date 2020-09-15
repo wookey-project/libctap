@@ -44,6 +44,12 @@ typedef mbed_error_t (*ctap_handle_apdu_t)(uint32_t metadata,
                                            uint8_t *msg_in, uint16_t len_in,
                                            uint8_t *resp, uint16_t *len_out);
 
+/*
+ * Wink event (LEDs, ... for timeout_ms milliseconds).
+ */
+typedef mbed_error_t (*ctap_handle_wink_t)(uint16_t timeout_ms);
+
+
 
 /************************************************************
  * About channels (CID) handling
@@ -81,7 +87,7 @@ typedef mbed_error_t (*ctap_channel_update_t)(uint32_t cid);
 /*
  * Declare CTAP HID interfae against USBHID stack.
  */
-mbed_error_t ctap_declare(uint8_t usbxdci_handler, ctap_handle_apdu_t apdu_cmd);
+mbed_error_t ctap_declare(uint8_t usbxdci_handler, ctap_handle_apdu_t apdu_cmd, ctap_handle_wink_t wink_cmd);
 
 /*
  * Configure the overall CTAP and below stack (including HID & USB stack).

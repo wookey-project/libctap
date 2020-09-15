@@ -221,6 +221,7 @@ static mbed_error_t handle_rq_ping(const ctap_cmd_t*cmd)
 static mbed_error_t handle_rq_wink(const ctap_cmd_t*cmd)
 {
     mbed_error_t errcode = MBED_ERROR_NONE;
+    ctap_context_t *ctx = ctap_get_context();
     uint16_t len = ((cmd->bcnth << 8) + cmd->bcntl);
 	/* We expect 0 data */
     if (len != 0) {
@@ -228,8 +229,10 @@ static mbed_error_t handle_rq_wink(const ctap_cmd_t*cmd)
         errcode = handle_rq_error(cmd->cid, U2F_ERR_INVALID_LEN);
         goto err;
     }
-    /* first do something for user interaction ... */
-
+    /* first do something for user interaction (500ms)... */
+    if (ctx->wink_cmd != NULL) {
+        ctx->wink_cmd(500);
+    }
     /* and return back content */
     errcode = ctaphid_send_response(NULL, 0, cmd->cid, cmd->cmd);
 err:
