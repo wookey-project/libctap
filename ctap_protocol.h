@@ -43,6 +43,7 @@ typedef enum {
     CTAP_CBOR      = 0x10,
     CTAP_CANCEL    = 0x11,
     CTAP_KEEPALIVE = 0x3b,
+    CTAP_SYNC      = 0x3c,
     CTAP_ERROR     = 0x3f,
 } ctaphid_cmd_id_t;
 
@@ -167,5 +168,7 @@ typedef enum {
  * Hande U2F commands
  */
 mbed_error_t ctap_handle_request(ctap_cmd_t *cmd);
+
+mbed_error_t handle_rq_error(uint32_t cid, uint8_t error);
 
 #endif/*!CTAP_PROTOCOL_H_*/

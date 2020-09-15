@@ -1,3 +1,4 @@
+#include "libc/sync.h"
 #include "ctap_control.h"
 #include "libusbhid.h"
 
@@ -55,6 +56,7 @@ mbed_error_t usbhid_report_received_trigger(uint8_t hid_handler, uint16_t size)
     ctap_context_t *ctx = ctap_get_context();
 
     log_printf("[CTAPHID] Received FIDO cmd (size %d)\n", size);
+    //set_bool_with_membarrier(&(ctx->ctap_cmd_received), true);
     ctx->ctap_cmd_received = true;
     ctx->ctap_cmd_size = size;
     /* nothing more to do, as the received  command is already set in .ctap_cmd field */

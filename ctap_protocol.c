@@ -1,4 +1,5 @@
 #include "libc/string.h"
+#include "libc/sync.h"
 #include "libusbhid.h"
 #include "ctap_control.h"
 #include "ctap_chan.h"
@@ -10,14 +11,7 @@ typedef union {
     ctap_seq_header_t      seq;
 } ctap_resp_t;
 
-#if 0
-/* a response can be seen as a header with a trailing data
- * or a uint8_t data flow of upto 64 bytes len */
-typedef union {
-    ctap_resp_headers_t  header;
-    uint8_t    data[64]; /* all responses are padded to 64 bytes */
-} ctap_resp_t;
-#endif
+
 
 
 /*******************************************************************
@@ -137,7 +131,7 @@ err:
  */
 
 
-static mbed_error_t handle_rq_error(uint32_t cid, uint8_t error)
+mbed_error_t handle_rq_error(uint32_t cid, uint8_t error)
 {
 	/* Prepare our frame */
     ctap_init_cmd_t frame;
@@ -218,6 +212,12 @@ static mbed_error_t handle_rq_ping(const ctap_cmd_t*cmd)
     return ctaphid_send_response((uint8_t*)cmd, len, cmd->cid, CTAP_PING|0x80);
 }
 
+static mbed_error_t handle_rq_sync(const ctap_cmd_t*cmd)
+{
+    return ctaphid_send_response(NULL, 0, cmd->cid, CTAP_SYNC|0x80);
+}
+
+
 static mbed_error_t handle_rq_wink(const ctap_cmd_t*cmd)
 {
     mbed_error_t errcode = MBED_ERROR_NONE;
@@ -242,6 +242,8 @@ err:
 static mbed_error_t handle_rq_lock(const ctap_cmd_t*cmd)
 {
     mbed_error_t errcode = MBED_ERROR_NONE;
+    ctap_context_t *ctx = ctap_get_context();
+
     uint16_t len = (cmd->bcnth << 8) + cmd->bcntl + sizeof(ctap_init_header_t);
 	/* We expect 0 data */
     if (len != 1) {
@@ -253,6 +255,7 @@ static mbed_error_t handle_rq_lock(const ctap_cmd_t*cmd)
        errcode = handle_rq_error(cmd->cid, U2F_ERR_INVALID_PAR);
        goto err;
     }
+    set_bool_with_membarrier(&(ctx->locked), true);
 
     errcode = ctaphid_send_response(NULL, 0, cmd->cid, CTAP_LOCK|0x80);
 
@@ -333,6 +336,7 @@ err:
 mbed_error_t ctap_handle_request(ctap_cmd_t *ctap_cmd)
 {
     mbed_error_t errcode = MBED_ERROR_NONE;
+    ctap_context_t *ctx = ctap_get_context();
     uint8_t cmd;
     if (ctap_cmd == NULL) {
         errcode = MBED_ERROR_INVPARAM;
@@ -344,15 +348,11 @@ mbed_error_t ctap_handle_request(ctap_cmd_t *ctap_cmd)
         errcode = MBED_ERROR_INVPARAM;
         goto err;
     }
-#if 0
-	/* Check locking:TODO : code RYAD */
-	if((cid_locked != 0) && (current_cid_num != frame_full.cid)){
-		if(u2f_hid_send_error(frame_full.cid, ERR_CHANNEL_BUSY)){
-			goto err;
-		}
-		return 0;
+	if((ctx->locked == true) && (ctx->curr_cid != ctap_cmd->cid)){
+        errcode = handle_rq_error(ctap_cmd->cid, U2F_ERR_CHANNEL_BUSY);
+		return errcode;
 	}
-#endif
+    set_u32_with_membarrier(&(ctx->curr_cid), ctap_cmd->cid);
 
     /* cleaning bit 7 (always set, see above) */
     cmd = ctap_cmd->cmd & 0x7f;
@@ -391,6 +391,12 @@ mbed_error_t ctap_handle_request(ctap_cmd_t *ctap_cmd)
         {
             log_printf("[CTAPHID] received U2F LOCK\n");
             errcode = handle_rq_lock(ctap_cmd);
+            break;
+        }
+        case CTAP_SYNC:
+        {
+            log_printf("[CTAPHID] received U2F SYNC\n");
+            errcode = handle_rq_sync(ctap_cmd);
             break;
         }
         default:

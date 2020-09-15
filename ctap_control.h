@@ -46,8 +46,8 @@ typedef enum {
 typedef struct {
     usbhid_report_infos_t        *ctap_report;
     volatile bool                          idle;
-    volatile bool                          locked;
-    volatile uint32_t                      curr_cid;
+    bool                          locked;
+    uint32_t                      curr_cid;
     uint8_t                       idle_ms;
     /* below stacks handlers (not cb, but references) */
     uint8_t                       hid_handler;
