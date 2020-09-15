@@ -221,16 +221,17 @@ static mbed_error_t handle_rq_ping(const ctap_cmd_t*cmd)
 static mbed_error_t handle_rq_wink(const ctap_cmd_t*cmd)
 {
     mbed_error_t errcode = MBED_ERROR_NONE;
-    uint16_t len = (cmd->bcnth << 8) + cmd->bcntl + sizeof(ctap_init_header_t);
+    uint16_t len = ((cmd->bcnth << 8) + cmd->bcntl);
 	/* We expect 0 data */
     if (len != 0) {
-       errcode = handle_rq_error(cmd->cid, U2F_ERR_INVALID_LEN);
-       goto err;
+        log_printf("[CTAPHID] invalid size for wink request (len == %d)\n", len);
+        errcode = handle_rq_error(cmd->cid, U2F_ERR_INVALID_LEN);
+        goto err;
     }
     /* first do something for user interaction ... */
 
     /* and return back content */
-    errcode = ctaphid_send_response((uint8_t*)cmd, len, cmd->cid, CTAP_PING|0x80);
+    errcode = ctaphid_send_response(NULL, 0, cmd->cid, cmd->cmd);
 err:
     return errcode;
 }
