@@ -14,12 +14,7 @@
 /*
  * CTAP/HID interactions with HID layer (triggers implementation)
  */
-
-/* The FIDO HID report content declaration */
-static usbhid_report_infos_t ctap_std_report = {
-    .num_items = 16,
-    .report_id = 0,
-    .items = {
+static usbhid_item_info_t ctap_items[16] = {
         /* this is the standard, datasheet defined FIDO2 HID report */
         { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_USAGE_PAGE, 2, CTAP_USAGE_PAGE_BYTE1, CTAP_USAGE_PAGE_BYTE0 },
         { USBHID_ITEM_TYPE_LOCAL, USBHID_ITEM_LOCAL_TAG_USAGE, 1, CTAP_USAGE_CTAP_U2FHID, 0 },
@@ -37,7 +32,14 @@ static usbhid_report_infos_t ctap_std_report = {
         { USBHID_ITEM_TYPE_GLOBAL, USBHID_ITEM_GLOBAL_TAG_REPORT_COUNT, 1, 64, 0 }, /* report count in bytes */
         { USBHID_ITEM_TYPE_MAIN, USBHID_ITEM_MAIN_TAG_OUTPUT, 1, USBHID_IOF_ITEM_DATA|USBHID_IOF_ITEM_CONST|USBHID_IOF_ITEM_VARIABLE|USBHID_IOF_ITEM_RELATIVE, 0 },
         { USBHID_ITEM_TYPE_MAIN, USBHID_ITEM_MAIN_TAG_END_COLLECTION, 0, 0, 0 }, /* C0 */
-    }
+
+};
+
+/* The FIDO HID report content declaration */
+static usbhid_report_infos_t ctap_std_report = {
+    .num_items = 16,
+    .report_id = 0,
+    .items = &(ctap_items[0])
 };
 
 usbhid_report_infos_t   *ctap_get_report(void)
