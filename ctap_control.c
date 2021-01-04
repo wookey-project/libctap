@@ -241,7 +241,7 @@ mbed_error_t ctap_configure(void)
     sevp.sigev_notify = SIGEV_THREAD;
 
     memset(&its, 0x0, sizeof(struct itimerspec));
-    its.it_value.tv_sec = 1; /* CID clean every 1 secs */
+    its.it_interval.tv_sec = 1; /* CID clean every 1 secs */
 
     if (timer_create(CLOCK_MONOTONIC, &sevp, &timerid) == -1) {
         log_printf("[CTAP] periodic timer create failed with errno %d\n", errno);
