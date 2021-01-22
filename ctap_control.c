@@ -241,7 +241,11 @@ mbed_error_t ctap_configure(void)
     sevp.sigev_notify = SIGEV_THREAD;
 
     memset(&its, 0x0, sizeof(struct itimerspec));
-    its.it_interval.tv_sec = 1; /* CID clean every 1 secs */
+    its.it_interval.tv_sec = 1; /* CID clean every 1 sec */
+    its.it_interval.tv_nsec = 0;
+
+    its.it_value.tv_sec = 1; /* CID clean first step: 1 sec */
+    its.it_value.tv_nsec = 0;
 
     if (timer_create(CLOCK_MONOTONIC, &sevp, &timerid) == -1) {
         log_printf("[CTAP] periodic timer create failed with errno %d\n", errno);
@@ -249,7 +253,7 @@ mbed_error_t ctap_configure(void)
         goto err;
     } else {
         if (timer_settime(timerid, 0, &its, NULL) == -1) {
-            printf("periodic timer settime failed with errno %d\n", errno);
+            printf("[CTAP] periodic timer settime failed with errno %d\n", errno);
             errcode = MBED_ERROR_UNKNOWN;
             goto err;
         }
