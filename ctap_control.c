@@ -25,11 +25,15 @@
 #include "libc/types.h"
 #include "libc/string.h"
 #include "libc/sync.h"
+#include "libc/time.h"
+#include "libc/signal.h"
+#include "libc/errno.h"
 #include "libusbhid.h"
 #include "api/libctap.h"
 #include "ctap_protocol.h"
 #include "ctap_control.h"
 #include "ctap_hid.h"
+#include "ctap_chan.h"
 
 
 #define CTAP_POLL_TIME      5 /* FIDO HID interface definition: Poll-time=5ms */
@@ -209,14 +213,54 @@ err:
     return errcode;
 }
 
+/**************
+ * About timer: an alarm is executed every second to clear used CID older than 1s
+ */
+
+void ctap_timer_notify(__sigval_t sig __attribute__((unused))) {
+    ctap_cid_periodic_clean();
+}
+
+static timer_t timerid;
+static struct sigevent sevp = { 0 };
+static struct itimerspec its = { 0 };
+
+
 mbed_error_t ctap_configure(void)
 {
-        /* in that case, any Set_Report (DATA OUT) is pushed to dedicated OUT EP instead
-         * of EP0. This avoid using control plane for DATA content. Althgouh,
-         * we have to configure this EP in order to be ready to receive the report */
-        usbhid_recv_report(ctap_ctx.hid_handler, ctap_ctx.recv_buf, CTAPHID_FRAME_MAXLEN);
+    mbed_error_t errcode = MBED_ERROR_NONE;
+    /* in that case, any Set_Report (DATA OUT) is pushed to dedicated OUT EP instead
+     * of EP0. This avoid using control plane for DATA content. Althgouh,
+     * we have to configure this EP in order to be ready to receive the report */
+    usbhid_recv_report(ctap_ctx.hid_handler, ctap_ctx.recv_buf, CTAPHID_FRAME_MAXLEN);
 
-    return MBED_ERROR_NONE;
+    /* let's start Channel ID auto-cleaner */
+    sevp.sigev_notify_function = ctap_timer_notify;
+    sevp.sigev_value.sival_ptr = &timerid;
+    sevp.sigev_signo = 0;
+    sevp.sigev_notify = SIGEV_THREAD;
+
+    memset(&its, 0x0, sizeof(struct itimerspec));
+    its.it_interval.tv_sec = 1; /* CID clean every 1 sec */
+    its.it_interval.tv_nsec = 0;
+
+    its.it_value.tv_sec = 1; /* CID clean first step: 1 sec */
+    its.it_value.tv_nsec = 0;
+
+    if (timer_create(CLOCK_MONOTONIC, &sevp, &timerid) == -1) {
+        log_printf("[CTAP] periodic timer create failed with errno %d\n", errno);
+        errcode = MBED_ERROR_UNKNOWN;
+        goto err;
+    } else {
+        if (timer_settime(timerid, 0, &its, NULL) == -1) {
+            printf("[CTAP] periodic timer settime failed with errno %d\n", errno);
+            errcode = MBED_ERROR_UNKNOWN;
+            goto err;
+        }
+    }
+
+err:
+    return errcode;
 }
 
 /* we initialize our OUT EP to be ready to receive, if needed. */

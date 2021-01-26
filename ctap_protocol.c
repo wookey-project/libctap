@@ -173,12 +173,13 @@ static mbed_error_t handle_rq_msg(ctap_cmd_t* cmd)
         goto err;
     }
     /* TODO channel to handle */
-    if (ctap_channel_exists(cid) == false) {
+    if (!ctap_cid_exists(cid)) {
         /* invalid channel */
         log_printf("[CTAP][MSG] New CID: %f\n", cid);
         handle_rq_error(cid, U2F_ERR_INVALID_PAR);
         goto err;
     }
+    ctap_cid_refresh(cid);
 
     /* now that header is sanitized, let's push the data content
      * to the backend
@@ -301,12 +302,19 @@ static mbed_error_t handle_rq_init(const ctap_cmd_t* cmd)
 
     if (cmd->cid == CTAPHID_BROADCAST_CID) {
 		/* Allocate next CID */
-        ctap_channel_create(&newcid);
+        ctap_cid_generate(&newcid);
+        ctap_cid_add(newcid);
         log_printf("[CTAP][INIT] New CID: %x\n", newcid);
 		*(uint32_t*)(&(resp[INIT_NONCE_SIZE])) = newcid;
         curcid = CTAPHID_BROADCAST_CID;
 	} else{
-		*(uint32_t*)(&(resp[INIT_NONCE_SIZE])) = cmd->cid;
+        if (ctap_cid_exists(cmd->cid)) {
+            ctap_cid_refresh(cmd->cid);
+        } else {
+            /* TODO: check standard: is INIT pkt with fixed, insexistant CID, legal ? */
+            ctap_cid_add(cmd->cid);
+        }
+        *(uint32_t*)(&(resp[INIT_NONCE_SIZE])) = cmd->cid;
         curcid = cmd->cid;
 	}
 	/* Version identifiers */
