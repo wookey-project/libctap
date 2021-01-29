@@ -175,7 +175,7 @@ static mbed_error_t handle_rq_msg(ctap_cmd_t* cmd)
     /* TODO channel to handle */
     if (!ctap_cid_exists(cid)) {
         /* invalid channel */
-        log_printf("[CTAP][MSG] New CID: %f\n", cid);
+        log_printf("[CTAP][MSG] New CID: %x\n", cid);
         handle_rq_error(cid, U2F_ERR_INVALID_PAR);
         goto err;
     }
@@ -301,33 +301,36 @@ static mbed_error_t handle_rq_init(const ctap_cmd_t* cmd)
     memcpy(&(resp[0]), cmd->data, INIT_NONCE_SIZE);
 
     if (cmd->cid == CTAPHID_BROADCAST_CID) {
-		/* Allocate next CID */
+        /* Remove the BROADCAST CID */
+        ctap_cid_remove(CTAPHID_BROADCAST_CID);
+	/* Allocate next CID */
         ctap_cid_generate(&newcid);
-        ctap_cid_add(newcid);
+        errcode = ctap_cid_add(newcid);
+        if(errcode != MBED_ERROR_NONE){
+            handle_rq_error(CTAPHID_BROADCAST_CID, U2F_ERR_CHANNEL_BUSY);
+            errcode = MBED_ERROR_NOMEM;
+            goto err;
+        }
         log_printf("[CTAP][INIT] New CID: %x\n", newcid);
 		*(uint32_t*)(&(resp[INIT_NONCE_SIZE])) = newcid;
         curcid = CTAPHID_BROADCAST_CID;
-	} else{
-        if (ctap_cid_exists(cmd->cid)) {
-            ctap_cid_refresh(cmd->cid);
-        } else {
-            /* TODO: check standard: is INIT pkt with fixed, insexistant CID, legal ? */
-            ctap_cid_add(cmd->cid);
-        }
-        *(uint32_t*)(&(resp[INIT_NONCE_SIZE])) = cmd->cid;
-        curcid = cmd->cid;
-	}
-	/* Version identifiers */
-	resp[12] = USBHID_PROTO_VERSION; // U2FHID protocol version identifier
-	resp[13] = 0; // Major device version number
-	resp[14] = 0; // Minor device version number
-	resp[15] = 0; // Build device version number
-	/* Capabilities flag: we accept the WINK command */
-	resp[16] = CTAP_CAPA_WINK|CTAP_CAPA_LOCK; // Capabilities flags
-	/* Send the frame on the line */
+    } else{
+        /* Only CTAPHID_BROADCAST_CID is allowed in INIT command */
+        handle_rq_error(CTAPHID_BROADCAST_CID, U2F_ERR_CHANNEL_BUSY);
+        errcode = MBED_ERROR_INVPARAM;
+        goto err;
+     }
+     /* Version identifiers */
+     resp[12] = USBHID_PROTO_VERSION; // U2FHID protocol version identifier
+     resp[13] = 0; // Major device version number
+     resp[14] = 0; // Minor device version number
+     resp[15] = 0; // Build device version number
+     /* Capabilities flag: we accept the WINK command */
+     resp[16] = CTAP_CAPA_WINK|CTAP_CAPA_LOCK; // Capabilities flags
+     /* Send the frame on the line */
 
-    log_printf("[CTAP][INIT] Sending back response\n");
-    errcode = ctaphid_send_response((uint8_t*)&resp, sizeof(resp), curcid, CTAP_INIT|0x80);
+     log_printf("[CTAP][INIT] Sending back response\n");
+     errcode = ctaphid_send_response((uint8_t*)&resp, sizeof(resp), curcid, CTAP_INIT|0x80);
 
 err:
     return errcode;
@@ -356,10 +359,10 @@ mbed_error_t ctap_handle_request(ctap_cmd_t *ctap_cmd)
         errcode = MBED_ERROR_INVPARAM;
         goto err;
     }
-	if((ctx->locked == true) && (ctx->curr_cid != ctap_cmd->cid)){
+    if((ctx->locked == true) && (ctx->curr_cid != ctap_cmd->cid)){
         errcode = handle_rq_error(ctap_cmd->cid, U2F_ERR_CHANNEL_BUSY);
-		return errcode;
-	}
+  	return errcode;
+    }
     set_u32_with_membarrier(&(ctx->curr_cid), ctap_cmd->cid);
 
     /* cleaning bit 7 (always set, see above) */

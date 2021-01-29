@@ -28,7 +28,7 @@
 #define USBHID_PROTO_VERSION 2
 #define CTAPHID_FRAME_MAXLEN 64
 
-#define CRAPHID_MAX_PAYLOAD_SIZE 7609
+#define CTAPHID_MAX_PAYLOAD_SIZE 7609
 
 /*****************************************
  * About command
@@ -66,7 +66,7 @@ typedef struct __packed {
     uint8_t  cmd;
     uint8_t  bcnth;
     uint8_t  bcntl;
-    uint8_t  data[CRAPHID_MAX_PAYLOAD_SIZE]; /* data is a blob here, but is a structured content, depending
+    uint8_t  data[CTAPHID_MAX_PAYLOAD_SIZE]; /* data is a blob here, but is a structured content, depending
                            on the cmd value. It can be encoded using APDU format or CBOR
                            format.
 CAUTION: the CTAPHID c*/
