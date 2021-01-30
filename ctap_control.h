@@ -29,7 +29,7 @@
 #include "api/libctap.h"
 #include "ctap_protocol.h"
 
-#if CONFIG_USR_LIB_FIDO_DEBUG
+#if CONFIG_USR_LIB_CTAP_DEBUG > 0
 # define log_printf(...) printf(__VA_ARGS__)
 #else
 # define log_printf(...)
@@ -45,7 +45,9 @@ typedef enum {
 /* the current FIDO CTAP context */
 typedef struct {
     usbhid_report_infos_t        *ctap_report;
-    volatile bool                          idle;
+    volatile bool                 ctap_report_received;
+    uint16_t                      ctap_report_size;
+    volatile bool                 idle;
     bool                          locked;
     uint32_t                      curr_cid;
     uint8_t                       idle_ms;
@@ -58,13 +60,7 @@ typedef struct {
     /* CTAP commands */
     volatile bool                 report_sent;
     uint8_t                       recv_buf[CTAPHID_FRAME_MAXLEN];
-    volatile ctap_buffer_state_t  ctap_cmd_buf_state;
-    volatile bool                 ctap_cmd_received;
-    uint16_t                      ctap_cmd_size;
-    uint16_t                      ctap_cmd_idx;
-    ctap_cmd_t                    ctap_cmd;
 } ctap_context_t;
-
 
 
 uint8_t ctap_get_usbhid_handler(void);

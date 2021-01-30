@@ -40,9 +40,11 @@
 #define CTAP_DESCRIPOR_NUM  1 /* To check */
 
 
-/* fido context .data initialization */
+/* fido contexts .data initialization */
 static ctap_context_t ctap_ctx = {
     .ctap_report = NULL,
+    .ctap_report_received = false,
+    .ctap_report_size = false,
     .idle = false,
     .curr_cid = 0,
     .locked = false,
@@ -52,12 +54,9 @@ static ctap_context_t ctap_ctx = {
     .apdu_cmd = NULL,
     .report_sent = true,
     .recv_buf = { 0 },
-    .ctap_cmd_buf_state = CTAP_CMD_BUFFER_STATE_EMPTY,
-    .ctap_cmd_received = false,
-    .ctap_cmd_size = 0,
-    .ctap_cmd_idx = 0,
-    .ctap_cmd = { 0 }
 };
+
+
 
 ctap_context_t *ctap_get_context(void)
 {
@@ -67,95 +66,131 @@ ctap_context_t *ctap_get_context(void)
 
 mbed_error_t ctaphid_receive_pkt(ctap_context_t *ctx)
 {
-    mbed_error_t errcode;
-    //set_bool_with_membarrier(&(ctx->ctap_cmd_received), false);
-    ctx->ctap_cmd_received = false;
-    uint8_t num_frames = 0;
+    mbed_error_t error;
 
-    memset(&(ctx->ctap_cmd), 0, sizeof(ctap_cmd_t));
     /* listen on data */
     usbhid_recv_report(ctap_ctx.hid_handler, (uint8_t*)&ctap_ctx.recv_buf, CTAPHID_FRAME_MAXLEN);
-    /* wait for reception */
-    while (!ctap_ctx.ctap_cmd_received);
-    /* get back initial frame */
-    ctap_init_cmd_t *init_cmd = (ctap_init_cmd_t*)&ctx->recv_buf[0];
-    if (!(init_cmd->header.cmd & 0x80)) {
-        log_printf("[CTAPHID] not initial sequence ! cmd is %x\n", init_cmd->header.cmd);
-        return MBED_ERROR_INVSTATE;
+    while(!ctx->ctap_report_received);
+    ctx->ctap_report_received = false;  
+
+    /* Sanity check on size */
+    if(ctx->ctap_report_size != CTAPHID_FRAME_MAXLEN){
+        error = MBED_ERROR_INVPARAM;
+        goto err;
     }
-    /* total amount of bytes that should be received is defined */
-    uint16_t blen = (init_cmd->header.bcnth << 8) | init_cmd->header.bcntl;
-    /* preparing full frame header */
-    ctx->ctap_cmd.cid = init_cmd->header.cid;
-    ctx->ctap_cmd.cmd = init_cmd->header.cmd;
-    ctx->ctap_cmd.bcnth = init_cmd->header.bcnth;
-    ctx->ctap_cmd.bcntl = init_cmd->header.bcntl;
+    ctx->ctap_report_size = 0;
 
-    if (blen > CTAPHID_FRAME_MAXLEN -  sizeof(ctap_init_header_t)) {
-        /* let's check the amount of data bytes with regards to effective max size */
-        uint16_t offset = 0;
-        num_frames = (blen - (CTAPHID_FRAME_MAXLEN -  sizeof(ctap_init_header_t))) / (CTAPHID_FRAME_MAXLEN - sizeof(ctap_seq_header_t));
-
-        if((blen - (CTAPHID_FRAME_MAXLEN-sizeof(ctap_init_header_t))) % (CTAPHID_FRAME_MAXLEN-sizeof(ctap_seq_header_t)) != 0) {
-            num_frames += 1;
+    /* We have a frame, get the CID */
+    ctap_init_cmd_t *init_cmd = (ctap_init_cmd_t*)&ctx->recv_buf[0];
+    ctx->curr_cid = init_cmd->header.cid;
+    /* Check if we are already treating this CID */
+    if(!ctap_cid_exists(init_cmd->header.cid) && (init_cmd->header.cid != CTAPHID_BROADCAST_CID)){
+        /* We are not treating the CID, and this is not a CTAPHID_BROADCAST_CID */
+        log_printf("[CTAPHID] u2f_hid_receive_frame: error in CID %x: neither existing nor CTAPHID_BROADCAST_CID\n", init_cmd->header.cid);
+        error = MBED_ERROR_INVPARAM;
+        goto err; 
+    }
+    /* In case of broadcast, we prepare a special broadcast frame */
+    if(init_cmd->header.cid == CTAPHID_BROADCAST_CID){
+        /* Only INIT accepts broadcast frames */
+        if(!(init_cmd->header.cmd & 0x80) || ((init_cmd->header.cmd & 0x7f) != CTAP_INIT)){
+            error = MBED_ERROR_INVPARAM;
+            goto err;
         }
-
-        /* let's copy the max amount of data in one pkt  */
-        memcpy(&(ctx->ctap_cmd.data[0]), &(init_cmd->data[0]), CTAPHID_FRAME_MAXLEN - sizeof(ctap_init_header_t));
-        offset +=  CTAPHID_FRAME_MAXLEN - sizeof(ctap_init_header_t);
-
-        uint8_t i;
-        for (i = 0; i < num_frames; ++i) {
-            ctap_seq_cmd_t *seq_cmd = (ctap_seq_cmd_t*)&ctx->recv_buf[0];
-            //set_bool_with_membarrier(&(ctx->ctap_cmd_received), false);
-            ctx->ctap_cmd_received = false;
-            /* listen on data */
-            usbhid_recv_report(ctap_ctx.hid_handler, (uint8_t*)&ctap_ctx.recv_buf, CTAPHID_FRAME_MAXLEN);
-            /* wait for reception */
-            while (!ctap_ctx.ctap_cmd_received);
-
-            /* sanitizing */
-            if (seq_cmd->header.cid != ctx->ctap_cmd.cid) {
-                log_printf("[CTAPHID] %s: receive frame: wrong cid %x in seq, should be %x\n", __func__, seq_cmd->header.cid, ctx->ctap_cmd.cid);
-                errcode = MBED_ERROR_INVPARAM;
-                goto err;
-            }
-            /* INIT frame ? (not a seq) */
-            if (((((ctap_init_cmd_t*)seq_cmd)->header.cmd) & 0x80) != 0) {
-                if ((((ctap_init_cmd_t*)seq_cmd)->header.cmd & 0x7f) == CTAP_SYNC) {
-                    log_printf("[CTAPHID] received SYNC during seq\n");
-                    /* TODO how to handle properly.... */
-                    ctap_init_cmd_t *init_cmd = (ctap_init_cmd_t*)&ctx->recv_buf[0];
-                    ctx->ctap_cmd.cid = init_cmd->header.cid;
-                    ctx->ctap_cmd.cmd = init_cmd->header.cmd;
-                    ctx->ctap_cmd.bcnth = 0;
-                    ctx->ctap_cmd.bcntl = 0;
-                } else {
-                    errcode = MBED_ERROR_INVSTATE;
-                    goto err;
-                }
-            }
-            if((seq_cmd->header.seq != i) || (seq_cmd->header.seq > 0x7f)) {
-                log_printf("[CTAPHID] u2f_hid_receive_frame: error in SEQ ...\n");
-                errcode = MBED_ERROR_INVSTATE;
-                goto err;
-            }
-            if(offset > (CRAPHID_MAX_PAYLOAD_SIZE - (CTAPHID_FRAME_MAXLEN-sizeof(ctap_seq_header_t)))) {
-            }
-
-            memcpy(&(ctx->ctap_cmd.data[offset]), &(seq_cmd->data[0]), (CTAPHID_FRAME_MAXLEN-sizeof(ctap_seq_header_t)));
-            offset += (CTAPHID_FRAME_MAXLEN-5);
-
-
+        error = ctap_cid_add(CTAPHID_BROADCAST_CID);
+        /* No more slots available ... return an error */
+        if(error != MBED_ERROR_NONE){
+            /* The lower layer will respond a "BUSY" channel */
+            error = MBED_ERROR_NOMEM;
+            goto err;
         }
-    } else {
-        memcpy(&(ctx->ctap_cmd.data[0]), &(init_cmd->data[0]), blen);
+    }
+    /* Get the channel we are treating */
+    chan_ctx_t *chan_ctx = ctap_cid_get_chan_ctx(init_cmd->header.cid);
+    if(chan_ctx == NULL){
+        /* This should not happen */
+        error = MBED_ERROR_UNKNOWN;
+        goto err;
+    }
+    /* We should not treat "complete" commands here */
+    if(chan_ctx->ctap_cmd_received){
+        error = MBED_ERROR_INVSTATE;
+        goto err;
+    }
+    /* Do we have a SYNC frame? */
+    if((init_cmd->header.cmd & 0x80) && ((init_cmd->header.cmd & 0x7f) == CTAP_SYNC)){
+        /* Resynchronize by deleting our current CID */
+        log_printf("[CTAPHID] received SYNC during seq\n");
+        ctap_cid_remove(ctx->curr_cid);
+        error = MBED_ERROR_NONE;
+        goto err;    
+    } 
+    /* Is it an initialization packet or a sequence packet? */
+    if(chan_ctx->ctap_cmd_size == 0){
+        /* This is a regular initial packet */
+        uint16_t blen = (init_cmd->header.bcnth << 8) | init_cmd->header.bcntl;
+        chan_ctx->ctap_cmd_size = blen;
+        chan_ctx->ctap_cmd_idx = 0;
+        chan_ctx->ctap_cmd_seq = 0;
+        /* Embedded command */
+        chan_ctx->ctap_cmd.cid = init_cmd->header.cid;
+        chan_ctx->ctap_cmd.cmd = init_cmd->header.cmd;
+        chan_ctx->ctap_cmd.bcnth = init_cmd->header.bcnth;
+        chan_ctx->ctap_cmd.bcntl = init_cmd->header.bcntl;
+        uint16_t pkt_data_sz = CTAPHID_FRAME_MAXLEN - sizeof(ctap_init_header_t);
+        if(blen <= pkt_data_sz){
+            pkt_data_sz = blen;
+            /* We do not expect more data: tell that we are done! */
+            chan_ctx->ctap_cmd_received = true;
+        }
+        /* Sanity check */ 
+        if(sizeof(chan_ctx->ctap_cmd.data) < pkt_data_sz){
+            error = MBED_ERROR_UNKNOWN;
+            goto err;
+        }
+        /* Copy the current data and increment our index */
+        memcpy(&(chan_ctx->ctap_cmd.data[0]), &(init_cmd->data[0]), pkt_data_sz);
+        chan_ctx->ctap_cmd_idx += pkt_data_sz;
+    }
+    else{
+        /* We are agregating here, we only expect SEQ packets! */
+        ctap_seq_cmd_t *seq_cmd = (ctap_seq_cmd_t*)&ctx->recv_buf[0];
+        /* Sanity check on sequence */
+        if((seq_cmd->header.seq != chan_ctx->ctap_cmd_seq) || (seq_cmd->header.seq > 0x7f)){
+            log_printf("[CTAPHID] u2f_hid_receive_frame: error in SEQ %d != %d or > 0x7f ...\n", seq_cmd->header.seq, chan_ctx->ctap_cmd_seq);
+            error = MBED_ERROR_INVSTATE;
+            goto err;
+        }
+        /* Sanity checks */
+        if(chan_ctx->ctap_cmd_idx >= chan_ctx->ctap_cmd_size){
+            error = MBED_ERROR_UNKNOWN;
+            goto err;
+        } 
+        /* Aggregate the data */
+        uint16_t pkt_data_sz = CTAPHID_FRAME_MAXLEN - sizeof(ctap_seq_header_t);
+        if(pkt_data_sz > (chan_ctx->ctap_cmd_size - chan_ctx->ctap_cmd_idx)){
+            pkt_data_sz = (chan_ctx->ctap_cmd_size - chan_ctx->ctap_cmd_idx);
+        }
+        /* Sanity checks */
+        if(sizeof(chan_ctx->ctap_cmd.data) < (chan_ctx->ctap_cmd_idx + pkt_data_sz)){
+            error = MBED_ERROR_UNKNOWN;
+            goto err;
+        }
+        /* Aggregate in buffer */
+        memcpy(&(chan_ctx->ctap_cmd.data[chan_ctx->ctap_cmd_idx]), &(seq_cmd->data[0]), pkt_data_sz);
+        /* Increment sequence to receive */
+        chan_ctx->ctap_cmd_seq++;
+        /* Increment idx */
+        chan_ctx->ctap_cmd_idx += pkt_data_sz;
+        /* Are we done? */
+        if(chan_ctx->ctap_cmd_idx >= chan_ctx->ctap_cmd_size){
+            chan_ctx->ctap_cmd_received = true;
+        }
     }
     /* pull down received flag */
-
-    errcode = MBED_ERROR_NONE;
+    error = MBED_ERROR_NONE;
 err:
-    return errcode;
+    return error;
 
 }
 
@@ -285,9 +320,38 @@ mbed_error_t ctap_exec(void)
     }
     errcode = ctaphid_receive_pkt(&ctap_ctx);
     switch (errcode) {
-        case MBED_ERROR_NONE:
-            errcode = ctap_handle_request(&ctap_ctx.ctap_cmd);
+        case MBED_ERROR_NONE: {
+            /* Parse all the channels to check if we have a complete command, and if yes execute it! */
+            ctap_cmd_t *cmd = ctap_cid_get_chan_complete_cmd();
+            if(cmd != NULL){
+                /* Execute our command */
+                errcode = ctap_handle_request(cmd);
+                /* Remove any broadcast command */
+                ctap_cid_remove(CTAPHID_BROADCAST_CID);
+                /* Mark the commands associated to CID as non treated 
+                 * since we are ready to treat a new one, and clear its
+                 * buffer states!
+                 */
+                ctap_cid_clear_cmd(cmd->cid);
+            }
+            /* Else, continue our receive loop! */
             break;
+        }
+        case MBED_ERROR_NOMEM:{
+            ctap_init_cmd_t *cmd = (ctap_init_cmd_t*)&(ctap_ctx.recv_buf[0]);
+            errcode = handle_rq_error(cmd->header.cid, U2F_ERR_CHANNEL_BUSY);
+            break;
+        }
+        case MBED_ERROR_INVSTATE:{
+            ctap_init_cmd_t *cmd = (ctap_init_cmd_t*)&(ctap_ctx.recv_buf[0]);
+            errcode = handle_rq_error(cmd->header.cid, U2F_ERR_INVALID_SEQ);
+            break;
+        }
+        case MBED_ERROR_INVPARAM:{
+            ctap_init_cmd_t *cmd = (ctap_init_cmd_t*)&(ctap_ctx.recv_buf[0]);
+            errcode = handle_rq_error(cmd->header.cid, U2F_ERR_INVALID_PAR);
+            break;
+        }
         default: {
             ctap_init_cmd_t *cmd = (ctap_init_cmd_t*)&(ctap_ctx.recv_buf[0]);
             errcode = handle_rq_error(cmd->header.cid, U2F_ERR_INVALID_CMD);

@@ -1,19 +1,39 @@
 #include "ctap_chan.h"
 #include "ctap_control.h"
 #include "libc/random.h"
+#include "libc/sync.h"
 
-#define MAX_CIDS 12
-#define CID_LIFETIME 2000 /* 2 seconds */
-
-typedef struct {
-    uint64_t last_used;
-    uint32_t cid;
-    bool     busy;
-} chan_ctx_t;
-
-/*XXX: test, 32 concurrent CID at a time */
 chan_ctx_t chans[MAX_CIDS] = { 0 };
 
+chan_ctx_t *ctap_cid_get_chan_ctx(uint32_t cid)
+{
+    for (uint8_t i = 0; i < MAX_CIDS; ++i) {
+        if(chans[i].busy == true && chans[i].cid == cid){
+            return &(chans[i]);
+        }
+    }
+    return NULL;
+}
+
+ctap_cmd_t *ctap_cid_get_chan_complete_cmd(void)
+{
+    for (uint8_t i = 0; i < MAX_CIDS; ++i) {
+        if(chans[i].busy == true && chans[i].ctap_cmd_received == true){
+            return &(chans[i].ctap_cmd);
+        }
+    }
+    return NULL;
+}
+
+ctap_cmd_t *ctap_cid_get_chan_cmd(uint32_t cid)
+{
+    for (uint8_t i = 0; i < MAX_CIDS; ++i) {
+        if(chans[i].busy == true && chans[i].cid == cid){
+            return &(chans[i].ctap_cmd);
+        }
+    }
+    return NULL;
+}
 
 mbed_error_t ctap_cid_periodic_clean(void)
 {
@@ -46,11 +66,16 @@ mbed_error_t ctap_cid_generate(uint32_t *cid)
         errcode = MBED_ERROR_INVPARAM;
         goto err;
     }
-    /* we use EwoK TRNG source to get back a random CID */
+    /* we use EwoK TRNG source to get back a random CID 
+     * NOTE: no need for cryptographically secure random here!
+     */
 rerun:
+    random_secure = SEC_RANDOM_NONSECURE;
     errcode = get_random((uint8_t*)cid, sizeof(uint32_t));
+    random_secure = SEC_RANDOM_SECURE;
 
-    /* CID has been randomly seed, yet... check that no acive CID
+
+    /* CID has been randomly seed, yet... check that no active CID
      * is using the same value */
     if (ctap_cid_exists(*cid)) {
         goto rerun;
@@ -65,16 +90,18 @@ mbed_error_t ctap_cid_add(uint32_t newcid)
     mbed_error_t errcode = MBED_ERROR_NONE;
     uint32_t i = 0;
 
-    while (chans[i].busy == true && i < MAX_CIDS) {
-        ++i;
-    }
-    if (i == MAX_CIDS) {
-        log_printf("[CTAPHID] no more free CID!\n");
-        errcode = MBED_ERROR_NOMEM;
-        goto err;
+    while (chans[i].busy == true) {
+        i++;
+        if(i >= MAX_CIDS){
+            log_printf("[CTAPHID] no more free CID!\n");
+            errcode = MBED_ERROR_NOMEM;
+            goto err;
+        }  
     }
     chans[i].busy = true;
     chans[i].cid = newcid;
+    chans[i].ctap_cmd_received = false;
+    chans[i].ctap_cmd_idx = chans[i].ctap_cmd_size = chans[i].ctap_cmd_seq = 0;
     ctap_cid_refresh(newcid);
 err:
     return errcode;
@@ -114,6 +141,18 @@ mbed_error_t ctap_cid_remove(uint32_t cid)
     for (uint8_t i = 0; i < MAX_CIDS; ++i) {
         if (chans[i].busy == true && chans[i].cid == cid) {
             chans[i].busy = false;
+        }
+    }
+    return MBED_ERROR_NONE;
+}
+
+mbed_error_t ctap_cid_clear_cmd(uint32_t cid)
+{
+    for (uint8_t i = 0; i < MAX_CIDS; ++i) {
+        //request_data_membarrier();
+        if (chans[i].busy == true && chans[i].cid == cid) {
+            chans[i].ctap_cmd_received = false;
+            chans[i].ctap_cmd_idx = chans[i].ctap_cmd_size = chans[i].ctap_cmd_seq = 0;
         }
     }
     return MBED_ERROR_NONE;
