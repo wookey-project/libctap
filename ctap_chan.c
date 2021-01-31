@@ -149,7 +149,6 @@ mbed_error_t ctap_cid_remove(uint32_t cid)
 mbed_error_t ctap_cid_clear_cmd(uint32_t cid)
 {
     for (uint8_t i = 0; i < MAX_CIDS; ++i) {
-        //request_data_membarrier();
         if (chans[i].busy == true && chans[i].cid == cid) {
             chans[i].ctap_cmd_received = false;
             chans[i].ctap_cmd_idx = chans[i].ctap_cmd_size = chans[i].ctap_cmd_seq = 0;
