@@ -40,11 +40,11 @@ typedef enum {
     CTAP_LOCK      = 0x04,
     CTAP_INIT      = 0x06,
     CTAP_WINK      = 0x08,
-    CTAP_CBOR      = 0x10,
-    CTAP_CANCEL    = 0x11,
-    CTAP_KEEPALIVE = 0x3b,
-    CTAP_SYNC      = 0x3c,
-    CTAP_ERROR     = 0x3f,
+    CTAP_CBOR      = 0x10, /* FIDO2 only */
+    CTAP_CANCEL    = 0x11, /* FIDO2 only */
+    CTAP_KEEPALIVE = 0x3b, /* FIDO2 only */
+    CTAP_SYNC      = 0x3c, /* FIDO2 only */
+    CTAP_ERROR     = 0x3f, 
 } ctaphid_cmd_id_t;
 
 
@@ -131,16 +131,19 @@ typedef enum {
 
 
 typedef enum {
-    U2F_ERR_NONE         = 0x0,
-    U2F_ERR_INVALID_CMD  = 0x1,
-    U2F_ERR_INVALID_PAR  = 0x2,
-    U2F_ERR_INVALID_LEN  = 0x3,
-    U2F_ERR_INVALID_SEQ  = 0x4,
-    U2F_ERR_MSG_TIMEOUT  = 0x5,
-    U2F_ERR_CHANNEL_BUSY = 0x6,
+    U2F_ERR_NONE            = 0x00,
+    U2F_ERR_INVALID_CMD     = 0x01,
+    U2F_ERR_INVALID_PAR     = 0x02,
+    U2F_ERR_INVALID_LEN     = 0x03,
+    U2F_ERR_INVALID_SEQ     = 0x04,
+    U2F_ERR_MSG_TIMEOUT     = 0x05,
+    U2F_ERR_CHANNEL_BUSY    = 0x06,
+    U2F_ERR_LOCK_REQUIRED   = 0x0a,
+    U2F_ERR_INVALID_CHANNEL = 0x0b,
+    U2F_ERR_OTHER           = 0x7f,
     /* to continue, there is various CTAP1 vs CTAP2 error codes.
      * Althought, codes are encoded on uint8_t values */
-} ctab_error_code_t;
+} ctap_error_code_t;
 
 /************************************************************
  * About CTAP_MSG formats

@@ -18,11 +18,38 @@ chan_ctx_t *ctap_cid_get_chan_ctx(uint32_t cid)
 ctap_cmd_t *ctap_cid_get_chan_complete_cmd(void)
 {
     for (uint8_t i = 0; i < MAX_CIDS; ++i) {
-        if(chans[i].busy == true && chans[i].ctap_cmd_received == true){
+        if(chans[i].busy == true && chans[i].ctap_cmd_received == CTAP_CMD_COMPLETE){
             return &(chans[i].ctap_cmd);
         }
     }
     return NULL;
+}
+
+ctap_cmd_t *ctap_cid_get_chan_inprogress_cmd(void)
+{
+    for (uint8_t i = 0; i < MAX_CIDS; ++i) {
+        if(chans[i].busy == true && chans[i].ctap_cmd_received == CTAP_CMD_INPROGRESS){
+            return &(chans[i].ctap_cmd);
+        }
+    }
+    return NULL;
+}
+
+/* Sanity check that at any time only one channel is in the
+ * CTAP_CMD_INPROGRESS state.
+ */
+bool ctap_cid_chan_sanity_check(void)
+{
+    unsigned int cnt = 0;
+    for (uint8_t i = 0; i < MAX_CIDS; ++i) {
+        if(chans[i].busy == true && chans[i].ctap_cmd_received == CTAP_CMD_INPROGRESS){
+            cnt++;
+        }
+    }
+    if(cnt > 1){
+        return false;
+    }
+    return true;
 }
 
 ctap_cmd_t *ctap_cid_get_chan_cmd(uint32_t cid)
@@ -100,7 +127,7 @@ mbed_error_t ctap_cid_add(uint32_t newcid)
     }
     chans[i].busy = true;
     chans[i].cid = newcid;
-    chans[i].ctap_cmd_received = false;
+    chans[i].ctap_cmd_received = CTAP_CMD_IDLE;
     chans[i].ctap_cmd_idx = chans[i].ctap_cmd_size = chans[i].ctap_cmd_seq = 0;
     ctap_cid_refresh(newcid);
 err:
@@ -110,7 +137,7 @@ err:
 bool ctap_cid_exists(uint32_t cid)
 {
     for (uint8_t i = 0; i < MAX_CIDS; ++i) {
-        if (chans[i].busy == true && chans[i].cid == cid) {
+        if ((chans[i].busy == true) && (chans[i].cid == cid)) {
             return true;
         }
     }
@@ -128,7 +155,7 @@ mbed_error_t ctap_cid_refresh(uint32_t cid)
         goto err;
     }
     for (uint8_t i = 0; i < MAX_CIDS; ++i) {
-        if (chans[i].busy == true && chans[i].cid == cid) {
+        if ((chans[i].busy == true) && (chans[i].cid == cid)) {
             chans[i].last_used = ms;
         }
     }
@@ -139,7 +166,7 @@ err:
 mbed_error_t ctap_cid_remove(uint32_t cid)
 {
     for (uint8_t i = 0; i < MAX_CIDS; ++i) {
-        if (chans[i].busy == true && chans[i].cid == cid) {
+        if ((chans[i].busy == true) && (chans[i].cid == cid) && (chans[i].ctap_cmd_received == CTAP_CMD_IDLE)) {
             chans[i].busy = false;
         }
     }
@@ -149,9 +176,8 @@ mbed_error_t ctap_cid_remove(uint32_t cid)
 mbed_error_t ctap_cid_clear_cmd(uint32_t cid)
 {
     for (uint8_t i = 0; i < MAX_CIDS; ++i) {
-        //request_data_membarrier();
-        if (chans[i].busy == true && chans[i].cid == cid) {
-            chans[i].ctap_cmd_received = false;
+        if ((chans[i].busy == true) && (chans[i].cid == cid)) {
+            chans[i].ctap_cmd_received = CTAP_CMD_IDLE;
             chans[i].ctap_cmd_idx = chans[i].ctap_cmd_size = chans[i].ctap_cmd_seq = 0;
         }
     }
