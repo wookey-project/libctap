@@ -37,7 +37,7 @@ static mbed_error_t ctaphid_send_response(uint8_t *resp, const uint16_t resp_len
         errcode = MBED_ERROR_INVPARAM;
         goto err;
     }
-    log_printf("[CTAPHID] 0x%x (%d) bytes to send\n", resp_len, resp_len);
+    log_printf("[CTAPHID] CID 0x%x: 0x%x (%d) bytes to send\n", cid, resp_len, resp_len);
     /* we know that the effective response buffer is upto ctap_resp_header_t + 256 bytes
      * (defined in the FIDO U2F standard). Finally, we can only push upto 64 bytes at a time.
      */
@@ -134,11 +134,11 @@ err:
 mbed_error_t handle_rq_error(uint32_t cid, uint8_t error)
 {
 	/* Prepare our frame */
-    ctap_init_cmd_t frame;
+        ctap_init_cmd_t frame;
 	memset(&frame, 0, sizeof(frame));
 
 	/* Send the frame on the line */
-	if(ctaphid_send_response((uint8_t*)&error, 1, cid, CTAP_ERROR)) {
+	if(ctaphid_send_response((uint8_t*)&error, 1, cid, CTAP_ERROR | 0x80)) {
 		goto err;
 	}
 
@@ -179,7 +179,6 @@ static mbed_error_t handle_rq_msg(ctap_cmd_t* cmd)
         handle_rq_error(cid, U2F_ERR_INVALID_PAR);
         goto err;
     }
-    ctap_cid_refresh(cid);
 
     /* now that header is sanitized, let's push the data content
      * to the backend
@@ -207,19 +206,19 @@ err:
     return errcode;
 }
 
-static mbed_error_t handle_rq_ping(const ctap_cmd_t*cmd)
+static mbed_error_t handle_rq_ping(const ctap_cmd_t* cmd)
 {
-    uint16_t len = (cmd->bcnth << 8) + cmd->bcntl + sizeof(ctap_init_header_t);
-    return ctaphid_send_response((uint8_t*)cmd, len, cmd->cid, CTAP_PING|0x80);
+    uint16_t len = (cmd->bcnth << 8) + cmd->bcntl;
+    return ctaphid_send_response((uint8_t*)cmd->data, len, cmd->cid, CTAP_PING|0x80);
 }
 
-static mbed_error_t handle_rq_sync(const ctap_cmd_t*cmd)
+static mbed_error_t handle_rq_sync(const ctap_cmd_t* cmd)
 {
     return ctaphid_send_response(NULL, 0, cmd->cid, CTAP_SYNC|0x80);
 }
 
 
-static mbed_error_t handle_rq_wink(const ctap_cmd_t*cmd)
+static mbed_error_t handle_rq_wink(const ctap_cmd_t* cmd)
 {
     mbed_error_t errcode = MBED_ERROR_NONE;
     ctap_context_t *ctx = ctap_get_context();
@@ -312,13 +311,13 @@ static mbed_error_t handle_rq_init(const ctap_cmd_t* cmd)
             goto err;
         }
         log_printf("[CTAP][INIT] New CID: %x\n", newcid);
-		*(uint32_t*)(&(resp[INIT_NONCE_SIZE])) = newcid;
+        *(uint32_t*)(&(resp[INIT_NONCE_SIZE])) = newcid;
         curcid = CTAPHID_BROADCAST_CID;
-    } else{
-        /* Only CTAPHID_BROADCAST_CID is allowed in INIT command */
-        handle_rq_error(CTAPHID_BROADCAST_CID, U2F_ERR_CHANNEL_BUSY);
-        errcode = MBED_ERROR_INVPARAM;
-        goto err;
+    } else{        
+        /* This is a synchronization request, respond with the asking CID that
+         * has been checked to be existing by the upper layer.
+         */
+        curcid = cmd->cid;
      }
      /* Version identifiers */
      resp[12] = USBHID_PROTO_VERSION; // U2FHID protocol version identifier
