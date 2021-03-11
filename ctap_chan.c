@@ -120,17 +120,28 @@ mbed_error_t ctap_cid_add(uint32_t newcid)
     while (chans[i].busy == true) {
         i++;
         if(i >= MAX_CIDS){
-            log_printf("[CTAPHID] no more free CID!\n");
-            errcode = MBED_ERROR_NOMEM;
-            goto err;
+            break;
         }  
+    }
+    /* No free slot found, now find the oldest CID and replace it */
+    if(i >= MAX_CIDS){
+        i =  0;
+        uint64_t oldest_cid_last_used = 0xffffffffffffffffULL;
+        uint32_t oldest_cid = 0;
+        for(i = 0; i < MAX_CIDS; i++){
+            if(chans[i].last_used < oldest_cid_last_used){
+                oldest_cid_last_used = chans[i].last_used;
+                oldest_cid = i;
+            }
+        }
+        i = oldest_cid;
     }
     chans[i].busy = true;
     chans[i].cid = newcid;
     chans[i].ctap_cmd_received = CTAP_CMD_IDLE;
     chans[i].ctap_cmd_idx = chans[i].ctap_cmd_size = chans[i].ctap_cmd_seq = 0;
     ctap_cid_refresh(newcid);
-err:
+
     return errcode;
 }
 
