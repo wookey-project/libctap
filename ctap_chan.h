@@ -5,8 +5,8 @@
 #include "libc/types.h"
 #include "ctap_control.h"
 
-#define MAX_CIDS 5
-#define CID_LIFETIME 10000 /* 10 seconds */
+#define MAX_CIDS 3
+#define CID_LIFETIME 40000 /* 40 seconds */
 
 typedef enum {
     CTAP_CMD_IDLE       = 0,
