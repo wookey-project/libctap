@@ -187,7 +187,7 @@ static mbed_error_t handle_rq_msg(ctap_cmd_t* cmd)
     uint16_t resp_len = sizeof(msg_resp);
 
 #if 1
-    /* MSG in CTAP1 cotnains APDU data. This should be passed to backend APDU through
+    /* MSG in CTAP1 cotains APDU data. This should be passed to backend APDU through
      * predefined callback, in the case where libapdu is handled in a different task.
      * This callback is responsible for passing the APDU content to whatever is
      * responsible for the APDU parsing, FIDO effective execution and result return */
