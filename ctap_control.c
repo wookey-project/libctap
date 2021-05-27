@@ -63,72 +63,161 @@ ctap_context_t *ctap_get_context(void)
     return &ctap_ctx;
 }
 
-
-mbed_error_t ctaphid_receive_pkt(ctap_context_t *ctx)
+/* 600 ms as a good compromise for transactions timeouts */
+#define CTAP_HID_TRANSACTION_TIMEOUT	600
+ctap_error_code_t ctaphid_receive_pkt(ctap_context_t *ctx)
 {
-    mbed_error_t error;
+    ctap_error_code_t error;
 
-    /* listen on data */
-    usbhid_recv_report(ctap_ctx.hid_handler, (uint8_t*)&ctap_ctx.recv_buf, CTAPHID_FRAME_MAXLEN);
-    while(!ctx->ctap_report_received);
-    ctx->ctap_report_received = false;  
-
-    /* Sanity check on size */
-    if(ctx->ctap_report_size != CTAPHID_FRAME_MAXLEN){
-        error = MBED_ERROR_INVPARAM;
+    /* listen on data if necessary */
+    if(ctx->idle){
+        ctx->idle = false;
+        usbhid_recv_report(ctap_ctx.hid_handler, (uint8_t*)&ctap_ctx.recv_buf, CTAPHID_FRAME_MAXLEN);
+    }
+    /* Get the current "in progress" cid */
+    ctap_cmd_t *curr_inprogress = ctap_cid_get_chan_inprogress_cmd();
+    chan_ctx_t *curr_inprogress_chan = NULL;
+    if(curr_inprogress != NULL){
+        curr_inprogress_chan = ctap_cid_get_chan_ctx(curr_inprogress->cid);
+        if(curr_inprogress_chan == NULL){
+            /* This should not happen */
+            error = U2F_ERR_OTHER;
+            goto err;
+        }
+    }
+    /* Wait with timeout our USB transfer */
+    uint64_t start, current;
+    if (sys_get_systick(&start, PREC_MILLI) != SYS_E_DONE){
+        error = U2F_ERR_OTHER;
         goto err;
     }
+    while(!ctx->ctap_report_received){
+        if (sys_get_systick(&current, PREC_MILLI) != SYS_E_DONE){
+            error = U2F_ERR_OTHER;
+            goto err;
+        }
+        /* Check for pending transaction timeout */
+        if((curr_inprogress != NULL) && (curr_inprogress_chan != NULL)){
+            if((current - curr_inprogress_chan->last_used) > CTAP_HID_TRANSACTION_TIMEOUT){
+                /* Clear our timed out CID */
+                log_printf("[CTAPHID] CID 0x%x timed out!\n", curr_inprogress->cid);
+                ctap_cid_clear_cmd(curr_inprogress->cid);
+                /* Set a TIMEOUT error */
+                ctx->curr_cid = curr_inprogress->cid;
+                error = U2F_ERR_MSG_TIMEOUT;
+                goto err;
+            }
+        }
+        if((current - start) > CTAP_HID_TRANSACTION_TIMEOUT){                                
+            /* Nothing received with timeout */
+            error = U2F_ERR_NONE;
+            goto err;
+        }
+    }
+
+    ctx->idle = true;
+    ctx->ctap_report_received = false;  
     ctx->ctap_report_size = 0;
+
+    /* Sanity check on the current state of our channels */
+    if(!ctap_cid_chan_sanity_check()){
+        error = U2F_ERR_OTHER;
+        goto err;
+    }
 
     /* We have a frame, get the CID */
     ctap_init_cmd_t *init_cmd = (ctap_init_cmd_t*)&ctx->recv_buf[0];
     ctx->curr_cid = init_cmd->header.cid;
+    /* CID = 0 is reserved, using it is an error */
+    if(ctx->curr_cid == 0){
+        log_printf("[CTAPHID] u2f_hid_receive_frame: error in CID, using 0 is reserved\n");
+        error = U2F_ERR_INVALID_CHANNEL;
+        goto err; 
+    }
     /* Check if we are already treating this CID */
-    if(!ctap_cid_exists(init_cmd->header.cid) && (init_cmd->header.cid != CTAPHID_BROADCAST_CID)){
+    if(!ctap_cid_exists(ctx->curr_cid) && (ctx->curr_cid != CTAPHID_BROADCAST_CID)){
         /* We are not treating the CID, and this is not a CTAPHID_BROADCAST_CID */
-        log_printf("[CTAPHID] u2f_hid_receive_frame: error in CID %x: neither existing nor CTAPHID_BROADCAST_CID\n", init_cmd->header.cid);
-        error = MBED_ERROR_INVPARAM;
+        log_printf("[CTAPHID] u2f_hid_receive_frame: error in CID %x: neither existing nor CTAPHID_BROADCAST_CID\n", ctx->curr_cid);
+        error = U2F_ERR_CHANNEL_BUSY;
         goto err; 
     }
     /* In case of broadcast, we prepare a special broadcast frame */
-    if(init_cmd->header.cid == CTAPHID_BROADCAST_CID){
+    if(ctx->curr_cid == CTAPHID_BROADCAST_CID){
         /* Only INIT accepts broadcast frames */
         if(!(init_cmd->header.cmd & 0x80) || ((init_cmd->header.cmd & 0x7f) != CTAP_INIT)){
-            error = MBED_ERROR_INVPARAM;
+            error = U2F_ERR_INVALID_CHANNEL;
             goto err;
         }
-        error = ctap_cid_add(CTAPHID_BROADCAST_CID);
         /* No more slots available ... return an error */
-        if(error != MBED_ERROR_NONE){
+        if(ctap_cid_add(CTAPHID_BROADCAST_CID) != MBED_ERROR_NONE){
             /* The lower layer will respond a "BUSY" channel */
-            error = MBED_ERROR_NOMEM;
+            error = U2F_ERR_CHANNEL_BUSY;
             goto err;
         }
     }
     /* Get the channel we are treating */
-    chan_ctx_t *chan_ctx = ctap_cid_get_chan_ctx(init_cmd->header.cid);
+    chan_ctx_t *chan_ctx = ctap_cid_get_chan_ctx(ctx->curr_cid);
     if(chan_ctx == NULL){
-        /* This should not happen */
-        error = MBED_ERROR_UNKNOWN;
+        /* This should not happen ...
+         */
+        error = U2F_ERR_OTHER;
         goto err;
     }
     /* We should not treat "complete" commands here */
-    if(chan_ctx->ctap_cmd_received){
-        error = MBED_ERROR_INVSTATE;
+    if(chan_ctx->ctap_cmd_received == CTAP_CMD_COMPLETE){
+        error = U2F_ERR_OTHER;
         goto err;
     }
-    /* Do we have a SYNC frame? */
-    if((init_cmd->header.cmd & 0x80) && ((init_cmd->header.cmd & 0x7f) == CTAP_SYNC)){
-        /* Resynchronize by deleting our current CID */
-        log_printf("[CTAPHID] received SYNC during seq\n");
-        ctap_cid_remove(ctx->curr_cid);
-        error = MBED_ERROR_NONE;
-        goto err;    
-    } 
+    if(curr_inprogress != NULL){
+        /* If the CIDs mismatch: this is an error! Only one CID can be "in progress" */
+        if(curr_inprogress->cid != ctx->curr_cid){
+            error = U2F_ERR_CHANNEL_BUSY;
+            goto err;
+        }
+        /* Do we have a resync frame on an active CID? (through a real SYNC or INIT on CID) */
+        if((init_cmd->header.cmd & 0x80) && (((init_cmd->header.cmd & 0x7f) == CTAP_INIT) || ((init_cmd->header.cmd & 0x7f) == CTAP_SYNC))){
+            /* Resynchronize by reinitializing the state of or current CID */
+            log_printf("[CTAPHID] received SYNC during transaction in progress (cmd 0x%x)\n", init_cmd->header.cmd);
+            /* Clear our current channel buffers */
+            ctap_cid_clear_cmd(ctx->curr_cid);
+            /* Now continue to treat the command as is! */
+        }
+        else{
+            /* Check for timeout for the asked CID currently in progress */
+            uint64_t current_time;
+            if (sys_get_systick(&current_time, PREC_MILLI) != SYS_E_DONE) {
+                error = U2F_ERR_OTHER;
+                goto err;
+            }
+            if((current_time - chan_ctx->last_used) > CTAP_HID_TRANSACTION_TIMEOUT){
+                /* Clear our timed out CID */
+                log_printf("[CTAPHID] CID 0x%x timed out!\n", curr_inprogress->cid);
+                ctap_cid_clear_cmd(curr_inprogress->cid);
+                /* Set a TIMEOUT error */
+                error = U2F_ERR_MSG_TIMEOUT;
+                goto err;
+            }
+        }
+    }
+    /* Tag the CID as "in progress" for now (either it was in progress or it becomes in progress) */ 
+    chan_ctx->ctap_cmd_received = CTAP_CMD_INPROGRESS;
+    /* Refresh the CID timings */
+    if(ctap_cid_refresh(ctx->curr_cid) != MBED_ERROR_NONE){
+        error = U2F_ERR_OTHER;
+        goto err;
+    }
     /* Is it an initialization packet or a sequence packet? */
     if(chan_ctx->ctap_cmd_size == 0){
         /* This is a regular initial packet */
         uint16_t blen = (init_cmd->header.bcnth << 8) | init_cmd->header.bcntl;
+        /* Check for size overflow, we are only allowed CTAPHID_MAX_PAYLOAD_SIZE = 7609 bytes
+         * as per specifications.
+         */
+        if(blen > CTAPHID_MAX_PAYLOAD_SIZE){
+            log_printf("[CTAPHID] command length %d > %d too big!\n", blen, CTAPHID_MAX_PAYLOAD_SIZE);
+            error = U2F_ERR_INVALID_LEN;
+            goto err;
+        }
         chan_ctx->ctap_cmd_size = blen;
         chan_ctx->ctap_cmd_idx = 0;
         chan_ctx->ctap_cmd_seq = 0;
@@ -141,11 +230,11 @@ mbed_error_t ctaphid_receive_pkt(ctap_context_t *ctx)
         if(blen <= pkt_data_sz){
             pkt_data_sz = blen;
             /* We do not expect more data: tell that we are done! */
-            chan_ctx->ctap_cmd_received = true;
+            chan_ctx->ctap_cmd_received = CTAP_CMD_COMPLETE;
         }
         /* Sanity check */ 
         if(sizeof(chan_ctx->ctap_cmd.data) < pkt_data_sz){
-            error = MBED_ERROR_UNKNOWN;
+            error = U2F_ERR_INVALID_LEN;
             goto err;
         }
         /* Copy the current data and increment our index */
@@ -158,12 +247,12 @@ mbed_error_t ctaphid_receive_pkt(ctap_context_t *ctx)
         /* Sanity check on sequence */
         if((seq_cmd->header.seq != chan_ctx->ctap_cmd_seq) || (seq_cmd->header.seq > 0x7f)){
             log_printf("[CTAPHID] u2f_hid_receive_frame: error in SEQ %d != %d or > 0x7f ...\n", seq_cmd->header.seq, chan_ctx->ctap_cmd_seq);
-            error = MBED_ERROR_INVSTATE;
+            error = U2F_ERR_INVALID_SEQ;
             goto err;
         }
         /* Sanity checks */
         if(chan_ctx->ctap_cmd_idx >= chan_ctx->ctap_cmd_size){
-            error = MBED_ERROR_UNKNOWN;
+            error = U2F_ERR_INVALID_LEN;
             goto err;
         } 
         /* Aggregate the data */
@@ -173,7 +262,7 @@ mbed_error_t ctaphid_receive_pkt(ctap_context_t *ctx)
         }
         /* Sanity checks */
         if(sizeof(chan_ctx->ctap_cmd.data) < (chan_ctx->ctap_cmd_idx + pkt_data_sz)){
-            error = MBED_ERROR_UNKNOWN;
+            error = U2F_ERR_INVALID_LEN;
             goto err;
         }
         /* Aggregate in buffer */
@@ -184,11 +273,11 @@ mbed_error_t ctaphid_receive_pkt(ctap_context_t *ctx)
         chan_ctx->ctap_cmd_idx += pkt_data_sz;
         /* Are we done? */
         if(chan_ctx->ctap_cmd_idx >= chan_ctx->ctap_cmd_size){
-            chan_ctx->ctap_cmd_received = true;
+            chan_ctx->ctap_cmd_received = CTAP_CMD_COMPLETE;
         }
     }
     /* pull down received flag */
-    error = MBED_ERROR_NONE;
+    error = U2F_ERR_NONE;
 err:
     return error;
 
@@ -312,18 +401,26 @@ mbed_error_t ctap_exec(void)
     /*TODO: 64ms poll time, hardcoded in libusbctrl by now */
     //uint32_t wait_time = CTAP_POLL_TIME;
 
+    ctap_context_t *ctx = ctap_get_context();
+    if(ctx == NULL){
+        errcode = MBED_ERROR_INVSTATE;
+        goto err;
+    }
     /* the Get_Report() request should be transmitted before starting
      * to send periodic reports */
-    if (ctap_ctx.report_sent == false) {
+    if (ctx->report_sent == false) {
         /* wait for previous report to be sent first */
         goto err;
     }
-    errcode = ctaphid_receive_pkt(&ctap_ctx);
-    switch (errcode) {
-        case MBED_ERROR_NONE: {
+    ctap_error_code_t ctaphid_receive_err = ctaphid_receive_pkt(ctx);
+    uint32_t cid = ctx->curr_cid;
+    
+    switch (ctaphid_receive_err) {
+        case U2F_ERR_NONE: {
             /* Parse all the channels to check if we have a complete command, and if yes execute it! */
             ctap_cmd_t *cmd = ctap_cid_get_chan_complete_cmd();
             if(cmd != NULL){
+                log_printf("[CTAPHID] ! Executing completed command, CMD=0x%x / CID=0x%x / Length=%d\n", cmd->cmd, cmd->cid, (uint16_t)((cmd->bcnth) << 8) | cmd->bcntl);
                 /* Execute our command */
                 errcode = ctap_handle_request(cmd);
                 /* Remove any broadcast command */
@@ -337,24 +434,8 @@ mbed_error_t ctap_exec(void)
             /* Else, continue our receive loop! */
             break;
         }
-        case MBED_ERROR_NOMEM:{
-            ctap_init_cmd_t *cmd = (ctap_init_cmd_t*)&(ctap_ctx.recv_buf[0]);
-            errcode = handle_rq_error(cmd->header.cid, U2F_ERR_CHANNEL_BUSY);
-            break;
-        }
-        case MBED_ERROR_INVSTATE:{
-            ctap_init_cmd_t *cmd = (ctap_init_cmd_t*)&(ctap_ctx.recv_buf[0]);
-            errcode = handle_rq_error(cmd->header.cid, U2F_ERR_INVALID_SEQ);
-            break;
-        }
-        case MBED_ERROR_INVPARAM:{
-            ctap_init_cmd_t *cmd = (ctap_init_cmd_t*)&(ctap_ctx.recv_buf[0]);
-            errcode = handle_rq_error(cmd->header.cid, U2F_ERR_INVALID_PAR);
-            break;
-        }
         default: {
-            ctap_init_cmd_t *cmd = (ctap_init_cmd_t*)&(ctap_ctx.recv_buf[0]);
-            errcode = handle_rq_error(cmd->header.cid, U2F_ERR_INVALID_CMD);
+            errcode = handle_rq_error(cid, ctaphid_receive_err);
             break;
         }
     }

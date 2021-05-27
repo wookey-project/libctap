@@ -5,14 +5,20 @@
 #include "libc/types.h"
 #include "ctap_control.h"
 
-#define MAX_CIDS 5
-#define CID_LIFETIME 4000 /* 4 seconds */
+#define MAX_CIDS CONFIG_USR_LIB_CTAP_MAX_CONCURRENT_CIDS
+#define CID_LIFETIME 40000 /* 10 seconds */
+
+typedef enum {
+    CTAP_CMD_IDLE       = 0,
+    CTAP_CMD_INPROGRESS = 1,
+    CTAP_CMD_COMPLETE   = 2,
+} ctap_cmd_state;
 
 typedef struct {
     uint64_t last_used;
     uint32_t cid;
     bool      busy;
-    bool      ctap_cmd_received;
+    ctap_cmd_state   ctap_cmd_received;
     uint16_t  ctap_cmd_size;
     uint16_t  ctap_cmd_idx;
     uint16_t  ctap_cmd_seq;
@@ -21,7 +27,11 @@ typedef struct {
 
 chan_ctx_t *ctap_cid_get_chan_ctx(uint32_t cid);
 
+bool ctap_cid_chan_sanity_check(void);
+
 ctap_cmd_t *ctap_cid_get_chan_complete_cmd(void);
+
+ctap_cmd_t *ctap_cid_get_chan_inprogress_cmd(void);
 
 ctap_cmd_t *ctap_cid_get_chan_cmd(uint32_t cid);
 

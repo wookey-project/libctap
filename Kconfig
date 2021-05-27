@@ -34,6 +34,14 @@ config USR_LIB_CTAP_CTAP2
      Support for initial FIDO 2 CTAP interface, using either APDU or
      CBOR encapsulation for data content.
 
+config USR_LIB_CTAP_MAX_CONCURRENT_CIDS
+  int "Maximum concurrent CID requests"
+  range 1 5
+  default 2
+  ---help---
+     Durring CTAP transactions, multiple transactions can interleaved with
+     different CIDs. To handle multiple CID in the same time, more memory
+     is requested.
 
 endmenu
 
